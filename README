@@ -1,0 +1,10 @@
+                                W32PTH
+                  An emulation of PTH for MS Windows
+                 ------------------------------------
+
+This is an emulation of GNU PTH for MS Windows (W32).  It works by
+blocking all threads when outside of one of the pth functions and
+using standard W32 threads and suncronization mechanisms to emulate
+the behaviour of PTH.
+
+It is currently limited to what GnuPG 2.0 requires.
