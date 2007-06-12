@@ -8,3 +8,9 @@ using standard W32 threads and suncronization mechanisms to emulate
 the behaviour of PTH.
 
 It is currently limited to what GnuPG 2.0 requires.
+
+
+Thisng we need to implement:
+
+  pth_select_ev - EV is currently ignored.
+

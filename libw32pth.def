@@ -57,3 +57,8 @@ EXPORTS
       pth_event_occurred  @30
       pth_event_concat  @31
       pth_event  @32
+
+      pth_select_ev  @33
+      pth_sigmask  @34
+        
+

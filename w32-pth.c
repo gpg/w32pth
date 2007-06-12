@@ -321,6 +321,17 @@ pth_write (int fd, const void * buffer, size_t size)
       else
         n = (int)nwrite;
     }
+  else if (n == -1)
+    {
+      DWORD nwrite;
+      char strerr[256];
+
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: pth_write(%d) failed in send: %s\n",
+                 log_get_prefix (NULL), fd,
+                 w32_strerror (strerr, sizeof strerr));
+      n = -1;
+    }
   leave_pth (__FUNCTION__);
   return n;
 }
@@ -329,6 +340,20 @@ pth_write (int fd, const void * buffer, size_t size)
 int
 pth_select (int nfds, fd_set * rfds, fd_set * wfds, fd_set * efds,
 	    const struct timeval * timeout)
+{
+  int n;
+
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+  n = select (nfds, rfds, wfds, efds, timeout);
+  leave_pth (__FUNCTION__);
+  return n;
+}
+
+
+int
+pth_select_ev (int nfds, fd_set * rfds, fd_set * wfds, fd_set * efds,
+               const struct timeval * timeout, pth_event_t ev_extra)
 {
   int n;
 
@@ -662,7 +687,7 @@ do_pth_spawn (pth_attr_t hd, void *(*func)(void *), void *arg)
      store the thread's handle in the context structure.  We need to
      do this to be able to close the handle from the launch helper. 
 
-     FIXME: We should no use th W32's Thread handle directly but keep
+     FIXME: We should not use W32's thread handle directly but keep
      our own thread control structure.  CTX may be used for that.  */
   if (DBG_INFO)
     fprintf (stderr, "%s: do_pth_spawn creating thread ...\n",
@@ -1379,6 +1404,13 @@ pth_sleep (int sec)
   return 0;
 }
 
+
+int
+pth_sigmask (int how, const sigset_t *set, sigset_t *old)
+{
+
+  return 0;
+}
 
 
 

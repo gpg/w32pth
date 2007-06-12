@@ -38,11 +38,24 @@
                          heavyweight - may be we should factor such
                          code out to a second header and adjust all
                          user files to include it only if required. */ 
+#include <sys/types.h> /* For sigset_t. */
 
 #ifndef W32_PTH_HANDLE_INTERNAL
 #define W32_PTH_HANDLE_INTERNAL  int
 #endif
 
+/* We need to define value for the how argument of pth_sigmask.  This
+   is required because Mingw does not yet define sigprocmask.  We use
+   an enum to error out if Mingw eventually defines them.  Also define
+   the sigset_t. */
+#ifdef __MINGW32__
+enum 
+  {
+    SIG_BLOCK = 0,
+    SIG_UNBLOCK = 1,
+    SIG_SETMASK = 2
+  };
+#endif /*__MINGW32__*/
 
 /* Filedescriptor blocking modes.  */
 enum
@@ -197,6 +210,8 @@ int pth_write (int fd, const void *buffer, size_t size);
 
 int pth_select (int nfds, fd_set *rfds, fd_set *wfds, fd_set *efds,
 		const struct timeval *timeout);
+int pth_select_ev (int nfds, fd_set *rfds, fd_set *wfds, fd_set *efds,
+                   const struct timeval * timeout, pth_event_t ev_extra);
 
 int pth_accept (int fd, struct sockaddr *addr, int *addrlen);
 int pth_accept_ev (int fd, struct sockaddr *addr, int *addrlen,
@@ -234,6 +249,9 @@ int pth_event_status (pth_event_t hd);
 int pth_event_occurred (pth_event_t hd);
 pth_event_t pth_event_concat (pth_event_t ev, ...);
 pth_event_t pth_event (unsigned long spec, ...);
+
+
+int pth_sigmask (int how, const sigset_t *set, sigset_t *old);
 
 
 
