@@ -30,7 +30,7 @@ check_version () {
 
 DIE=no
 FORCE=
-if test "$1" == "--force"; then
+if test x"$1" = x"--force"; then
   FORCE=" --force"
   shift
 fi
@@ -76,7 +76,7 @@ if test "$1" = "--build-w32"; then
     fi
 
     ./configure --enable-maintainer-mode  --prefix=${w32root}  \
-            --host=${host} --build=${build}
+            --host=${host} --build=${build} "$@"
 
     exit $?
 fi

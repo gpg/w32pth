@@ -1,3 +1,31 @@
+2007-06-29  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (pth_event_add): Remove.
+	(pth_event_concat): Correctly implement as a ring.
+	(do_pth_wait): Fixed bug which let us wait only on the first
+	event.  More or less rewrote it.
+	(do_pth_event_occurred): removed and repalced by direct call to
+	theSTATUS field of the event.
+	(pth_event_status): Changed implementation to accommodate the
+	changed do_pth_wait.
+	(pth_event_status): Ditto.
+
+2007-06-28  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (sig_handler): Ignore the logoff and close event.
+	(do_pth_event_body): Properly ignore the static mode.
+	(do_pth_event_body): Implement PTH_EVENT_SELECT.
+	(wait_select_thread): New.
+	(pth_select_ev): Support ev_extra.
+
+2007-06-25  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (pth_mutex_init): Remove superfluous free.
+
+2007-06-15  Werner Koch  <wk@g10code.com>
+
+	* autogen.sh: Use = and not == in test to be POSIXly correct.
+
 2007-05-30  Werner Koch  <wk@g10code.com>
 
 	Package created.

@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <io.h>
 #include <signal.h>
+#include <errno.h>
 
 /* We don't want to have any Windows specific code in the header, thus
    we use a macro which defaults to a compatible type in w32-pth.h. */
@@ -70,27 +71,42 @@ static CRITICAL_SECTION pth_shd;
 /* Events are store in a double linked event ring.  */
 struct pth_event_s
 {
-  struct pth_event_s * next;
-  struct pth_event_s * prev;
-  HANDLE hd;
+  struct pth_event_s *next; 
+  struct pth_event_s *prev;
+  HANDLE hd;                  /* The event object.  */
+  int u_type;                 /* The type of the event.  */
   union
   {
-    struct sigset_s * sig;
-    int               fd;
-    struct timeval    tv;
-    pth_mutex_t     * mx;
+    int              fd;      /* Used for PTH_EVENT_FD.  */
+    struct 
+    {
+      int *rc;
+      int nfd;
+      fd_set *rfds;
+      fd_set *wfds;
+      fd_set *efds;
+    } sel;                    /* Used for PTH_EVENT_SELECT.  */
+    struct 
+    {
+      struct sigset_s *set;
+      int *signo;
+    } sig;                    /* Used for PTH_EVENT_SIGS.  */
+    struct timeval   tv;      /* Used for PTH_EVENT_TIME.  */
+    pth_mutex_t     *mx;      /* Used for PTH_EVENT_MUTEX.  */
   } u;
-  int * val;
-  int u_type;
-  int flags;
+  unsigned int flags;   /* Flags used to further describe an event.
+                           This is the bit wise combination of
+                           PTH_MODE_* or PTH_UNTIL_*.  */
+  pth_status_t status;  /* Current status of the event.  */
 };
 
 
+/* Attribute object for threads.  */
 struct pth_attr_s 
 {
   unsigned int flags;
   unsigned int stack_size;
-  char * name;
+  char *name;
 };
 
 
@@ -113,8 +129,8 @@ struct thread_info_s
 static pth_event_t do_pth_event (unsigned long spec, ...);
 static unsigned int do_pth_waitpid (unsigned pid, int * status, int options);
 static int do_pth_wait (pth_event_t ev);
-static int do_pth_event_status (pth_event_t ev);
 static void *launch_thread (void * ctx);
+static int do_pth_event_free (pth_event_t ev, int mode);
 
 
 
@@ -323,7 +339,6 @@ pth_write (int fd, const void * buffer, size_t size)
     }
   else if (n == -1)
     {
-      DWORD nwrite;
       char strerr[256];
 
       if (DBG_ERROR)
@@ -338,30 +353,90 @@ pth_write (int fd, const void * buffer, size_t size)
 
 
 int
-pth_select (int nfds, fd_set * rfds, fd_set * wfds, fd_set * efds,
+pth_select (int nfd, fd_set * rfds, fd_set * wfds, fd_set * efds,
 	    const struct timeval * timeout)
 {
   int n;
 
   implicit_init ();
   enter_pth (__FUNCTION__);
-  n = select (nfds, rfds, wfds, efds, timeout);
+  n = select (nfd, rfds, wfds, efds, timeout);
   leave_pth (__FUNCTION__);
   return n;
 }
 
 
 int
-pth_select_ev (int nfds, fd_set * rfds, fd_set * wfds, fd_set * efds,
-               const struct timeval * timeout, pth_event_t ev_extra)
+pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
+               const struct timeval *timeout, pth_event_t ev_extra)
 {
-  int n;
+  int rc;
+  pth_event_t ev;
+  pth_event_t ev_time = NULL;
+  int selected;
 
   implicit_init ();
   enter_pth (__FUNCTION__);
-  n = select (nfds, rfds, wfds, efds, timeout);
+
+  ev = do_pth_event (PTH_EVENT_SELECT, &rc, nfd, rfds, wfds, efds);
+  if (!ev)
+    {
+      leave_pth (__FUNCTION__);
+      return -1;
+    }
+  if (timeout)
+    {
+      ev_time = do_pth_event (PTH_EVENT_TIME, 
+                              pth_timeout (timeout->tv_sec, timeout->tv_usec));
+      if (!ev_time)
+        {
+          rc = -1;
+          goto leave;
+        }
+      pth_event_concat (ev, ev_time, NULL);
+    }
+  if (ev_extra)
+    pth_event_concat (ev, ev_extra, NULL);
+
+  do 
+    {
+      rc = do_pth_wait (ev);
+      if (rc < 0)
+        goto leave;
+    }
+  while (!rc);
+  
+  if (ev_extra)
+    pth_event_isolate (ev_extra);
+  if (timeout)
+    pth_event_isolate (ev_time);
+
+  /* Fixme: We should check whether select failed and return EBADF in
+     this case.  */
+  selected = (ev && ev->status == PTH_STATUS_OCCURRED);
+  if (timeout && (ev_time && ev_time->status == PTH_STATUS_OCCURRED))
+    {
+      selected = 1;
+      if (rfds)
+        FD_ZERO(rfds);
+      if (wfds)
+        FD_ZERO(wfds);
+      if (efds)
+        FD_ZERO(efds);
+      rc = 0;
+    }
+  if (ev_extra && !selected)
+    {
+      rc = -1;
+      errno = EINTR;
+    }
+
+ leave:
+  do_pth_event_free (ev, PTH_FREE_THIS);
+  do_pth_event_free (ev_time, PTH_FREE_THIS);
+
   leave_pth (__FUNCTION__);
-  return n;
+  return rc;
 }
 
 
@@ -448,7 +523,7 @@ pth_accept_ev (int fd, struct sockaddr *addr, int *addrlen,
       if (ev_extra)
         {
           pth_event_isolate (ev);
-          if (do_pth_event_status (ev) != PTH_STATUS_OCCURRED)
+          if (ev && ev->status != PTH_STATUS_OCCURRED)
             {
               pth_fdmode (fd, fdmode);
               leave_pth (__FUNCTION__);
@@ -562,8 +637,6 @@ pth_mutex_init (pth_mutex_t *mutex)
   *mutex = CreateMutex (&sa, FALSE, NULL);
   if (!*mutex)
    {
-      free (*mutex);
-      *mutex = NULL;
       leave_pth (__FUNCTION__);
       return FALSE;
     }
@@ -829,7 +902,10 @@ sig_handler (DWORD signo)
     {
     case CTRL_C_EVENT:     pth_signo = SIGINT; break;
     case CTRL_BREAK_EVENT: pth_signo = SIGTERM; break;
+    default:
+      return FALSE;
     }
+  /* Fixme: We can keep only track of one signal at a time. */
   SetEvent (pth_signo_ev);
   if (DBG_INFO)
     fprintf (stderr, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
@@ -844,18 +920,38 @@ do_pth_event_body (unsigned long spec, va_list arg)
   pth_event_t ev;
   int rc;
 
+  if ((spec & (PTH_MODE_CHAIN|PTH_MODE_REUSE)))
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: pth_event spec=%lu - not supported\n", 
+                 log_get_prefix (NULL), spec);
+      return NULL; /* Not supported.  */
+    }
+
   if (DBG_INFO)
     fprintf (stderr, "%s: pth_event spec=%lu\n", log_get_prefix (NULL), spec);
+
   ev = calloc (1, sizeof *ev);
   if (!ev)
     return NULL;
+
+  /* We don't support static yet but we need to consume the
+     argument.  */
+  if ( (spec & PTH_MODE_STATIC) )
+    {
+      ev->flags |= PTH_MODE_STATIC;
+      va_arg (arg, pth_key_t);
+    }
+
+  ev->status = PTH_STATUS_PENDING;
+
   if (spec == 0)
     ;
   else if (spec & PTH_EVENT_SIGS)
     {
-      ev->u.sig = va_arg (arg, struct sigset_s *);
       ev->u_type = PTH_EVENT_SIGS;
-      ev->val = va_arg (arg, int *);	
+      ev->u.sig.set = va_arg (arg, struct sigset_s *);
+      ev->u.sig.signo = va_arg (arg, int *);	
       rc = SetConsoleCtrlHandler (sig_handler, TRUE);
       if (DBG_INFO)
         fprintf (stderr, "%s: pth_event: sigs rc=%d\n",
@@ -865,10 +961,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
     {
       if (spec & PTH_UNTIL_FD_READABLE)
         ev->flags |= PTH_UNTIL_FD_READABLE;
-      if (spec & PTH_MODE_STATIC)
-        ev->flags |= PTH_MODE_STATIC;
       ev->u_type = PTH_EVENT_FD;
-      va_arg (arg, pth_key_t);
       ev->u.fd = va_arg (arg, int);
       if (DBG_INFO)
         fprintf (stderr, "%s: pth_event: fd=%d\n",
@@ -877,9 +970,6 @@ do_pth_event_body (unsigned long spec, va_list arg)
   else if (spec & PTH_EVENT_TIME)
     {
       pth_time_t t;
-      if (spec & PTH_MODE_STATIC)
-        ev->flags |= PTH_MODE_STATIC;
-      va_arg (arg, pth_key_t);
       t = va_arg (arg, pth_time_t);
       ev->u_type = PTH_EVENT_TIME;
       ev->u.tv.tv_sec =  t.tv_sec;
@@ -887,16 +977,25 @@ do_pth_event_body (unsigned long spec, va_list arg)
     }
   else if (spec & PTH_EVENT_MUTEX)
     {
-      va_arg (arg, pth_key_t);
       ev->u_type = PTH_EVENT_MUTEX;
       ev->u.mx = va_arg (arg, pth_mutex_t*);
     }
-    
+  else if (spec & PTH_EVENT_SELECT)
+    {
+      ev->u_type = PTH_EVENT_SELECT;
+      ev->u.sel.rc = va_arg (arg, int *);
+      ev->u.sel.nfd = va_arg (arg, int);
+      ev->u.sel.rfds = va_arg (arg, fd_set *);
+      ev->u.sel.wfds = va_arg (arg, fd_set *);
+      ev->u.sel.efds = va_arg (arg, fd_set *);
+    }
+
+  /* Create an Event which needs to be manually reset.  */
   memset (&sa, 0, sizeof sa);
   sa.bInheritHandle = TRUE;
   sa.lpSecurityDescriptor = NULL;
   sa.nLength = sizeof sa;
-  ev->hd = CreateEvent (&sa, FALSE, FALSE, NULL);
+  ev->hd = CreateEvent (&sa, TRUE, FALSE, NULL);
   if (!ev->hd)
     {
       free (ev);
@@ -939,34 +1038,33 @@ pth_event (unsigned long spec, ...)
 }
 
 
-static void
-pth_event_add (pth_event_t root, pth_event_t node)
-{
-  pth_event_t n;
-
-  for (n=root; n->next; n = n->next)
-    ;
-  n->next = node;
-}
-
-
 pth_event_t
-pth_event_concat (pth_event_t evf, ...)
+pth_event_concat (pth_event_t head, ...)
 {
-  pth_event_t evn;
+  pth_event_t ev, next, last, tmp;
   va_list ap;
 
-  if (!evf)
+  if (!head)
     return NULL;
 
   implicit_init ();
 
-  va_start (ap, evf);
-  while ((evn = va_arg(ap, pth_event_t)) != NULL)
-    pth_event_add (evf, evn);
+  ev = head;
+  last = head->next;
+  va_start (ap, head);
+  while ( (next = va_arg (ap, pth_event_t)))
+    {
+      ev->next = next;
+      tmp = next->prev;
+      next->prev = ev;
+      ev = tmp;
+    }
   va_end (ap);
 
-  return evf;
+  ev->next = last;
+  last->prev = ev;
+
+  return head;
 }
 
 
@@ -1054,53 +1152,31 @@ launch_thread (void *arg)
 /* }  */
 
 
-static int
-sigpresent (struct sigset_s * ss, int signo)
-{
+/* static int */
+/* sigpresent (struct sigset_s * ss, int signo) */
+/* { */
 /*     int i; */
 /*     for (i=0; i < ss->idx; i++) { */
 /* 	if (ss->sigs[i] == signo) */
 /* 	    return 1; */
 /*     } */
 /* FIXME: See how to implement it.  */
-    return 0;
-}
+/*     return 0; */
+/* } */
 
 
-static int
-do_pth_event_occurred (pth_event_t ev)
+
+int
+pth_event_status (pth_event_t ev)
 {
-  int ret;
+  int ret; 
 
   if (!ev)
     return 0;
-
-  ret = 0;
-  switch (ev->u_type)
-    {
-    case 0:
-      if (WaitForSingleObject (ev->hd, 0) == WAIT_OBJECT_0)
-        ret = 1;
-      break;
-
-    case PTH_EVENT_SIGS:
-      if (sigpresent (ev->u.sig, pth_signo) &&
-          WaitForSingleObject (pth_signo_ev, 0) == WAIT_OBJECT_0)
-        {
-          if (DBG_INFO)
-            fprintf (stderr, "%s: pth_event_occurred: sig signaled.\n",
-                     log_get_prefix (NULL));
-          (*ev->val) = pth_signo;
-          ret = 1;
-        }
-      break;
-
-    case PTH_EVENT_FD:
-      if (WaitForSingleObject (ev->hd, 0) == WAIT_OBJECT_0)
-        ret = 1;
-      break;
-    }
-
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+  ret = ev? ev->status : 0;;
+  leave_pth (__FUNCTION__);
   return ret;
 }
 
@@ -1108,35 +1184,9 @@ do_pth_event_occurred (pth_event_t ev)
 int
 pth_event_occurred (pth_event_t ev)
 {
-  int ret;
-
-  implicit_init ();
-  enter_pth (__FUNCTION__);
-  ret = do_pth_event_occurred (ev);
-  leave_pth (__FUNCTION__);
-  return ret;
+  return pth_event_status (ev) == PTH_STATUS_OCCURRED;
 }
 
-
-static int
-do_pth_event_status (pth_event_t ev)
-{
-  if (!ev)
-    return 0;
-  if (do_pth_event_occurred (ev))
-    return PTH_STATUS_OCCURRED;
-  return 0;
-}
-
-int
-pth_event_status (pth_event_t ev)
-{
-  if (!ev)
-    return 0;
-  if (pth_event_occurred (ev))
-    return PTH_STATUS_OCCURRED;
-  return 0;
-}
 
 
 static int
@@ -1252,18 +1302,6 @@ spawn_helper_thread (void *(*func)(void *), void *arg)
 }
 
 
-static void 
-free_helper_threads (HANDLE *waitbuf, int *hdidx, int n)
-{
-  int i;
-
-  for (i=0; i < n; i++)
-    {
-      CloseHandle (waitbuf[hdidx[i]]);
-      waitbuf[hdidx[i]] = NULL;
-    }
-}
-
 
 static void *
 wait_fd_thread (void * ctx)
@@ -1293,13 +1331,30 @@ wait_timer_thread (void * ctx)
 }
 
 
+static void *
+wait_select_thread (void * ctx)
+{
+  pth_event_t ev = ctx;
+
+  *ev->u.sel.rc = select (ev->u.sel.nfd, 
+                          ev->u.sel.rfds, ev->u.sel.wfds, ev->u.sel.efds,NULL);
+  SetEvent (ev->hd);
+  if (DBG_INFO)
+    fprintf (stderr, "%s: wait_select_thread: exit.\n", log_get_prefix (NULL));
+  ExitThread (0);
+  return NULL;
+}
+
+
 static int
 do_pth_wait (pth_event_t ev)
 {
   HANDLE waitbuf[MAXIMUM_WAIT_OBJECTS/2];
-  int    hdidx[MAXIMUM_WAIT_OBJECTS/2];
-  DWORD n = 0;
-  int pos=0, i=0;
+  pth_event_t evarray[MAXIMUM_WAIT_OBJECTS/2];
+  HANDLE threadlist[MAXIMUM_WAIT_OBJECTS/2];
+  DWORD n;
+  int pos, idx, threadlistidx, i;
+  pth_event_t r;
 
   if (!ev)
     return 0;
@@ -1310,57 +1365,104 @@ do_pth_wait (pth_event_t ev)
 
   if (DBG_INFO)
     fprintf (stderr, "%s: pth_wait: cnt %lu\n", log_get_prefix (NULL), n);
-  if (ev)
-    {
-      pth_event_t r = ev;
-      do
-        {
-          switch (r->u_type)
-            {
-            case 0:
-              waitbuf[pos++] = r->hd;
-              break;
-              
-            case PTH_EVENT_SIGS:
-              waitbuf[pos++] = pth_signo_ev;
-              if (DBG_INFO)
-                fprintf (stderr, "pth_wait: add signal event.\n");
-              break;
-              
-            case PTH_EVENT_FD:
-              if (DBG_INFO)
-                fprintf (stderr, "pth_wait: spawn event wait thread.\n");
-              hdidx[i++] = pos;
-              waitbuf[pos++] = spawn_helper_thread (wait_fd_thread, r);
-              break;
-              
-            case PTH_EVENT_TIME:
-              if (DBG_INFO)
-                fprintf (stderr, "pth_wait: spawn event timer thread.\n");
-              hdidx[i++] = pos;
-              waitbuf[pos++] = spawn_helper_thread (wait_timer_thread, r);
-              break;
-          
-            case PTH_EVENT_MUTEX:
-              if (DBG_INFO)
-                fprintf (stderr, "pth_wait: ignoring mutex event.\n");
-              break;
-            }
-        }
-      while ( r != ev );
-    }
-  if (DBG_INFO)
-    fprintf (stderr, "%s: pth_wait: set %d\n", log_get_prefix (NULL), pos);
-  n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
-  free_helper_threads (waitbuf, hdidx, i);
-  if (DBG_INFO)
-    fprintf (stderr, "%s: pth_wait: n %ld\n", log_get_prefix (NULL), n);
 
-  if (n != WAIT_TIMEOUT)
-    return 1;
-    
-  return 0;
+  /* Set all events to pending.  */
+  r = ev;
+  do 
+    {
+      r->status = PTH_STATUS_PENDING;
+      r = r->next;
+    }
+  while ( r != ev);
+
+  /* Prepare all events which requires to launch helper threads for
+     some types.  This creates an array of handles which are lates
+     passed to WFMO. */
+  pos = threadlistidx = 0;
+  r = ev;
+  do
+    {
+      switch (r->u_type)
+        {
+        case PTH_EVENT_SIGS:
+          if (DBG_INFO)
+            fprintf (stderr, "pth_wait: add signal event\n");
+          /* Register the global signal event.  */
+          evarray[pos] = ev;  
+          waitbuf[pos++] = pth_signo_ev;
+          break;
+          
+        case PTH_EVENT_FD:
+          if (DBG_INFO)
+            fprintf (stderr, "pth_wait: spawn wait_fd_thread\n");
+          evarray[pos] = ev;  
+          waitbuf[pos] = spawn_helper_thread (wait_fd_thread, r);
+          threadlist[threadlistidx++] = waitbuf[pos];
+          pos++;
+          break;
+          
+        case PTH_EVENT_TIME:
+          if (DBG_INFO)
+            fprintf (stderr, "pth_wait: spawn wait_timer_thread\n");
+          evarray[pos] = ev;  
+          waitbuf[pos] = spawn_helper_thread (wait_timer_thread, r);
+          threadlist[threadlistidx++] = waitbuf[pos];
+          pos++;
+          break;
+
+        case PTH_EVENT_SELECT:
+          if (DBG_INFO)
+            fprintf (stderr, "pth_wait: spawn wait_select_thread.\n");
+          evarray[pos] = ev;  
+          waitbuf[pos] = spawn_helper_thread (wait_select_thread, r);
+          threadlist[threadlistidx++] = waitbuf[pos];
+          pos++;
+          break;
+
+        case PTH_EVENT_MUTEX:
+          if (DBG_ERROR)
+            fprintf (stderr, "pth_wait: ignoring mutex event.\n");
+          break;
+        }
+      r = r->next;
+    }
+  while ( r != ev );
+
+  if (DBG_INFO)
+    fprintf (stderr, "%s: pth_wait: WFMO n=%d\n", log_get_prefix (NULL), pos);
+  n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
+  for (i=0; i < threadlistidx; i++)
+    CloseHandle (threadlist[i]);
+  if (DBG_INFO)
+    fprintf (stderr, "%s: pth_wait: WFMO returned %ld\n",
+             log_get_prefix (NULL), n);
+
+  if (n >= 0 && n < pos)
+    {
+      int count;
+      /* At least one object has been signaled.  Walk over all events
+         with an assigned handle and update the status.  We start at N
+         which indicates the lowest signaled event.  */
+      for (count = 0, idx = n; idx < pos; idx++)
+        if (idx == n || WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
+          {
+            ResetEvent (evarray[idx]->hd);
+            evarray[idx]->status = PTH_STATUS_OCCURRED;
+            count++;
+            if (evarray[idx]->u_type == PTH_EVENT_SIGS)
+              *(evarray[idx]->u.sig.signo) = pth_signo;
+          }
+      if (DBG_INFO)
+        fprintf (stderr, "%s: pth_wait: %d events have been signalled\n",
+                 log_get_prefix (NULL), count);
+      return count;
+    }
+  else if (n == WAIT_TIMEOUT)
+    return 0;
+  else
+    return -1;
 }
+
 
 int
 pth_wait (pth_event_t ev)
