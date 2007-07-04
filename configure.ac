@@ -146,6 +146,7 @@ AC_C_BIGENDIAN
 
 AC_CHECK_SIZEOF(unsigned int)
 AC_CHECK_SIZEOF(unsigned long)
+AC_CHECK_SIZEOF(long long)
 
 # To be used in pth-config
 W32PTH_CONFIG_LIBS="-lw32pth"

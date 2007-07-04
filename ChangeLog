@@ -1,11 +1,19 @@
+2007-07-04  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c: Major rewrite of the event stuff. 
+
+2007-07-03  Werner Koch  <wk@g10code.com>
+
+	* Makefile.am (libw32pth_la_LIBADD): Use ws2_32 instead of wsock32.
+
 2007-06-29  Werner Koch  <wk@g10code.com>
 
 	* w32-pth.c (pth_event_add): Remove.
 	(pth_event_concat): Correctly implement as a ring.
 	(do_pth_wait): Fixed bug which let us wait only on the first
 	event.  More or less rewrote it.
-	(do_pth_event_occurred): removed and repalced by direct call to
-	theSTATUS field of the event.
+	(do_pth_event_occurred): Removed and repalced by direct call to
+	the STATUS field of the event.
 	(pth_event_status): Changed implementation to accommodate the
 	changed do_pth_wait.
 	(pth_event_status): Ditto.

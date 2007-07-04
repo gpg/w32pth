@@ -53,7 +53,7 @@ libw32pth_la_LDFLAGS = $(w32pth_res_ldflag) $(no_undefined) $(export_symbols) \
       -version-info \
       @W32PTH_LT_CURRENT@:@W32PTH_LT_REVISION@:@W32PTH_LT_AGE@
 libw32pth_la_DEPENDENCIES = $(w32pth_deps)
-libw32pth_la_LIBADD = @LTLIBOBJS@ -lwsock32
+libw32pth_la_LIBADD = @LTLIBOBJS@ -lws2_32
 libw32pth_la_SOURCES = w32-pth.c pth.h
 
 

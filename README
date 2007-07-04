@@ -10,10 +10,6 @@ the behaviour of PTH.
 It is currently limited to what GnuPG 2.0 requires.
 
 
-Thing we need to implement:
-
-  pth_select_ev - EV is currently ignored.
-
 
 Missing stuff:
 

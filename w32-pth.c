@@ -51,6 +51,10 @@
 #error TRUE or FALSE defined to wrong values
 #endif
 
+#if SIZEOF_LONG_LONG != 8
+#error long long is not 64 bit
+#endif
+
 
 /* States whether this module has been initialized.  */
 static int pth_initialized;
@@ -68,7 +72,15 @@ static HANDLE pth_signo_ev;
 /* Mutex to make sure only one thread is running. */
 static CRITICAL_SECTION pth_shd;
 
-/* Events are store in a double linked event ring.  */
+/* Object used by update_fdarray.  */
+struct fdarray_item_s 
+{
+  int fd;
+  long netevents;
+};
+
+
+/* Pth events are store in a double linked event ring.  */
 struct pth_event_s
 {
   struct pth_event_s *next; 
@@ -81,7 +93,6 @@ struct pth_event_s
     struct 
     {
       int *rc;
-      int nfd;
       fd_set *rfds;
       fd_set *wfds;
       fd_set *efds;
@@ -141,11 +152,143 @@ log_get_prefix (const void *dummy)
   return "libw32pth";
 }
 
+static char *
+w32_strerror (char *strerr, size_t strerrsize)
+{
+  if (strerrsize > 1)
+    FormatMessage (FORMAT_MESSAGE_FROM_SYSTEM, NULL, (int)GetLastError (),
+                   MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   strerr, strerrsize, NULL);
+  return strerr;
+}
+
+static char *
+wsa_strerror (char *strerr, size_t strerrsize)
+{
+  if (strerrsize > 1)
+    FormatMessage (FORMAT_MESSAGE_FROM_SYSTEM, NULL, (int)WSAGetLastError (),
+                   MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
+                   strerr, strerrsize, NULL);
+  return strerr;
+}
+
+
+/* Create a manual resetable event object useable in WFMO.  */
+static HANDLE
+create_event (void)
+{
+  SECURITY_ATTRIBUTES sa;
+  HANDLE h, h2;
+  char strerr[256];
+
+  memset (&sa, 0, sizeof sa);
+  sa.bInheritHandle = TRUE;
+  sa.lpSecurityDescriptor = NULL;
+  sa.nLength = sizeof sa;
+  h = CreateEvent (&sa, TRUE, FALSE, NULL);
+  if (!h)
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: CreateEvent failed: %s\n",
+                 log_get_prefix (NULL), 
+                 w32_strerror (strerr, sizeof strerr));
+      return NULL;
+    }
+  if (!DuplicateHandle (GetCurrentProcess(), h,
+                        GetCurrentProcess(), &h2,
+                        EVENT_MODIFY_STATE|SYNCHRONIZE, FALSE, 0 ) ) 
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: "
+                 "setting synchronize for event object %p failed: %s\n",
+                 log_get_prefix (NULL), h,
+                 w32_strerror (strerr, sizeof strerr));
+      CloseHandle (h);
+      return NULL;
+    }
+  CloseHandle (h);
+  if (DBG_INFO)
+    {
+      fprintf (stderr, "%s: CreateEvent(%p) succeeded\n",
+               log_get_prefix (NULL), h2);
+    }
+  return h2;
+}
+
+
+static void
+set_event (HANDLE h)
+{
+  char strerr[256];
+
+  if (!SetEvent (h))
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: SetEvent(%p) failed: %s\n",
+                 log_get_prefix (NULL), h,
+                 w32_strerror (strerr, sizeof strerr));
+    }
+  else if (DBG_INFO)
+    {
+      fprintf (stderr, "%s: SetEvent(%p) succeeded\n",
+               log_get_prefix (NULL), h);
+    }
+}
+
+static void
+reset_event (HANDLE h)
+{
+  char strerr[256];
+
+  if (!ResetEvent (h))
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: ResetEvent(%p) failed: %s\n",
+                 log_get_prefix (NULL), h,
+                 w32_strerror (strerr, sizeof strerr));
+    }
+  else if (DBG_INFO)
+    {
+      fprintf (stderr, "%s: ResetEvent(%p) succeeded\n",
+               log_get_prefix (NULL), h);
+    }
+}
+
+
+
+/* Create a timer event. */
+static HANDLE
+create_timer (void)
+{
+  SECURITY_ATTRIBUTES sa;
+  HANDLE h;
+  char strerr[256];
+
+  memset (&sa, 0, sizeof sa);
+  sa.bInheritHandle = TRUE;
+  sa.lpSecurityDescriptor = NULL;
+  sa.nLength = sizeof sa;
+  h = CreateWaitableTimer (&sa, TRUE, NULL);
+  if (!h)
+    {
+      if (DBG_ERROR)
+        fprintf (stderr, "%s: CreateWaitableTimer failed: %s\n",
+                 log_get_prefix (NULL), 
+                 w32_strerror (strerr, sizeof strerr));
+      return NULL;
+    }
+  if (DBG_INFO)
+    {
+      fprintf (stderr, "%s: CreateWaitableTimer(%p) succeeded\n",
+               log_get_prefix (NULL), h);
+    }
+  return h;
+}
+
 
 int
 pth_init (void)
 {
-  SECURITY_ATTRIBUTES sa;
   WSADATA wsadat;
   const char *s;
   
@@ -162,14 +305,11 @@ pth_init (void)
   InitializeCriticalSection (&pth_shd);
   if (pth_signo_ev)
     CloseHandle (pth_signo_ev);
-  memset (&sa, 0, sizeof sa);
-  sa.bInheritHandle = TRUE;
-  sa.lpSecurityDescriptor = NULL;
-  sa.nLength = sizeof sa;
-  pth_signo_ev = CreateEvent (&sa, TRUE, FALSE, NULL);
+
+  pth_signo_ev = create_event ();
   if (!pth_signo_ev)
     return FALSE;
-
+  
   pth_initialized = 1;
   EnterCriticalSection (&pth_shd);
   return TRUE;
@@ -190,17 +330,6 @@ pth_kill (void)
   WSACleanup ();
   pth_initialized = 0;
   return TRUE;
-}
-
-
-static char *
-w32_strerror (char *strerr, size_t strerrsize)
-{
-  if (strerrsize > 1)
-    FormatMessage (FORMAT_MESSAGE_FROM_SYSTEM, NULL, (int)GetLastError (),
-                   MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
-                   strerr, strerrsize, NULL);
-  return strerr;
 }
 
 
@@ -365,12 +494,33 @@ pth_select (int nfd, fd_set * rfds, fd_set * wfds, fd_set * efds,
   return n;
 }
 
+static void
+show_event_ring (const char *text, pth_event_t ev)
+{
+  pth_event_t r;
+
+  if (!ev)
+    {
+      fprintf (stderr, "show_event_ring(%s):  No ring\n", text);
+      return;
+    }
+
+  r = ev;
+  do
+    {
+      fprintf (stderr, "show_event_ring(%s): type=%d r=%p prev=%p next=%p\n",
+               text, r->u_type, r, r->prev, r->next);
+    }
+  while (r=r->next, r != ev);
+}
+  
+
 
 int
 pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
                const struct timeval *timeout, pth_event_t ev_extra)
 {
-  int rc;
+  int rc, sel_rc;
   pth_event_t ev;
   pth_event_t ev_time = NULL;
   int selected;
@@ -378,7 +528,7 @@ pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
   implicit_init ();
   enter_pth (__FUNCTION__);
 
-  ev = do_pth_event (PTH_EVENT_SELECT, &rc, nfd, rfds, wfds, efds);
+  ev = do_pth_event (PTH_EVENT_SELECT, &sel_rc, nfd, rfds, wfds, efds);
   if (!ev)
     {
       leave_pth (__FUNCTION__);
@@ -406,14 +556,22 @@ pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
     }
   while (!rc);
   
-  if (ev_extra)
-    pth_event_isolate (ev_extra);
+  pth_event_isolate (ev);
   if (timeout)
     pth_event_isolate (ev_time);
+
+  if (DBG_INFO)
+    {
+      show_event_ring ("ev      ", ev);
+      show_event_ring ("ev_time ", ev_time);
+      show_event_ring ("ev_extra", ev_extra); 
+    }
 
   /* Fixme: We should check whether select failed and return EBADF in
      this case.  */
   selected = (ev && ev->status == PTH_STATUS_OCCURRED);
+  if (selected)
+    rc = sel_rc;
   if (timeout && (ev_time && ev_time->status == PTH_STATUS_OCCURRED))
     {
       selected = 1;
@@ -906,19 +1064,47 @@ sig_handler (DWORD signo)
       return FALSE;
     }
   /* Fixme: We can keep only track of one signal at a time. */
-  SetEvent (pth_signo_ev);
+  set_event (pth_signo_ev);
   if (DBG_INFO)
     fprintf (stderr, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
   return TRUE;
 }
 
 
+/* Helper to build an fdarray.  */
+static int
+build_fdarray (struct fdarray_item_s *fdarray, int nfdarray,
+               fd_set *fds, long netevents)
+{
+  int i, j, fd;
+
+  if (fds)
+    for (i=0; i < fds->fd_count; i++)
+      {
+        fd = fds->fd_array[i];
+        for (j=0; j < nfdarray; j++)
+          if (fdarray[j].fd == fd)
+            {
+              fdarray[j].netevents |= netevents;
+              break;
+            }
+        if (!(j < nfdarray) && nfdarray < FD_SETSIZE)
+          {
+            fdarray[nfdarray].fd = fd;
+            fdarray[nfdarray].netevents = netevents;
+            nfdarray++;
+          }
+      }
+  return nfdarray;
+}
+
+
 static pth_event_t
 do_pth_event_body (unsigned long spec, va_list arg)
 {
-  SECURITY_ATTRIBUTES sa;
+  char strerr[256];
   pth_event_t ev;
-  int rc;
+  int i, rc;
 
   if ((spec & (PTH_MODE_CHAIN|PTH_MODE_REUSE)))
     {
@@ -934,6 +1120,17 @@ do_pth_event_body (unsigned long spec, va_list arg)
   ev = calloc (1, sizeof *ev);
   if (!ev)
     return NULL;
+  ev->next = ev;
+  ev->prev = ev;
+  if ((spec & PTH_EVENT_TIME))
+    ev->hd = create_timer ();
+  else
+    ev->hd = create_event ();
+  if (!ev->hd)
+    {
+      free (ev);
+      return NULL;
+    }
 
   /* We don't support static yet but we need to consume the
      argument.  */
@@ -952,7 +1149,8 @@ do_pth_event_body (unsigned long spec, va_list arg)
       ev->u_type = PTH_EVENT_SIGS;
       ev->u.sig.set = va_arg (arg, struct sigset_s *);
       ev->u.sig.signo = va_arg (arg, int *);	
-      rc = SetConsoleCtrlHandler (sig_handler, TRUE);
+      /* The signal handler is disabled for now.  */
+      rc = 0/*SetConsoleCtrlHandler (sig_handler, TRUE)*/;
       if (DBG_INFO)
         fprintf (stderr, "%s: pth_event: sigs rc=%d\n",
                  log_get_prefix (NULL), rc);
@@ -982,27 +1180,35 @@ do_pth_event_body (unsigned long spec, va_list arg)
     }
   else if (spec & PTH_EVENT_SELECT)
     {
+      struct fdarray_item_s fdarray[FD_SETSIZE];
+      int nfdarray;
+
       ev->u_type = PTH_EVENT_SELECT;
       ev->u.sel.rc = va_arg (arg, int *);
-      ev->u.sel.nfd = va_arg (arg, int);
+      (void)va_arg (arg, int); /* Ignored. */
       ev->u.sel.rfds = va_arg (arg, fd_set *);
       ev->u.sel.wfds = va_arg (arg, fd_set *);
       ev->u.sel.efds = va_arg (arg, fd_set *);
-    }
+      nfdarray = 0;
+      nfdarray = build_fdarray (fdarray, nfdarray, 
+                                ev->u.sel.rfds, (FD_READ|FD_ACCEPT) );
+      nfdarray = build_fdarray (fdarray, nfdarray, 
+                                ev->u.sel.wfds, (FD_WRITE) );
+      nfdarray = build_fdarray (fdarray, nfdarray, 
+                                ev->u.sel.efds, (FD_OOB|FD_CLOSE) );
 
-  /* Create an Event which needs to be manually reset.  */
-  memset (&sa, 0, sizeof sa);
-  sa.bInheritHandle = TRUE;
-  sa.lpSecurityDescriptor = NULL;
-  sa.nLength = sizeof sa;
-  ev->hd = CreateEvent (&sa, TRUE, FALSE, NULL);
-  if (!ev->hd)
-    {
-      free (ev);
-      return NULL;
+      for (i=0; i < nfdarray; i++)
+        {
+          if (WSAEventSelect (fdarray[i].fd, ev->hd, fdarray[i].netevents))
+            {
+              if (DBG_ERROR)
+                fprintf (stderr, 
+                         "%s: pth_event: WSAEventSelect(%d[%d]) failed: %s\n",
+                         log_get_prefix (NULL), i, fdarray[i].fd,
+                         wsa_strerror (strerr, sizeof strerr));
+            }
+        }
     }
-  ev->next = ev;
-  ev->prev = ev;
 
   return ev;
 }
@@ -1050,7 +1256,7 @@ pth_event_concat (pth_event_t head, ...)
   implicit_init ();
 
   ev = head;
-  last = head->next;
+  last = ev->next;
   va_start (ap, head);
   while ( (next = va_arg (ap, pth_event_t)))
     {
@@ -1103,6 +1309,9 @@ wait_for_fd (int fd, int is_read, int nwait)
     }
   return 0;
 }
+
+
+
 
 
 static void *
@@ -1311,49 +1520,22 @@ wait_fd_thread (void * ctx)
   wait_for_fd (ev->u.fd, ev->flags & PTH_UNTIL_FD_READABLE, 3600);
   if (DBG_INFO)
     fprintf (stderr, "%s: wait_fd_thread: exit.\n", log_get_prefix (NULL));
-  SetEvent (ev->hd);
+  set_event (ev->hd);
   ExitThread (0);
   return NULL;
 }
 
-
-static void *
-wait_timer_thread (void * ctx)
-{
-  pth_event_t ev = ctx;
-  int n = ev->u.tv.tv_sec*1000;
-  Sleep (n);
-  SetEvent (ev->hd);
-  if (DBG_INFO)
-    fprintf (stderr, "%s: wait_timer_thread: exit.\n", log_get_prefix (NULL));
-  ExitThread (0);
-  return NULL;
-}
-
-
-static void *
-wait_select_thread (void * ctx)
-{
-  pth_event_t ev = ctx;
-
-  *ev->u.sel.rc = select (ev->u.sel.nfd, 
-                          ev->u.sel.rfds, ev->u.sel.wfds, ev->u.sel.efds,NULL);
-  SetEvent (ev->hd);
-  if (DBG_INFO)
-    fprintf (stderr, "%s: wait_select_thread: exit.\n", log_get_prefix (NULL));
-  ExitThread (0);
-  return NULL;
-}
 
 
 static int
 do_pth_wait (pth_event_t ev)
 {
+  char strerr[256];
   HANDLE waitbuf[MAXIMUM_WAIT_OBJECTS/2];
   pth_event_t evarray[MAXIMUM_WAIT_OBJECTS/2];
   HANDLE threadlist[MAXIMUM_WAIT_OBJECTS/2];
   DWORD n;
-  int pos, idx, threadlistidx, i;
+  int pos, idx, thlstidx, i;
   pth_event_t r;
 
   if (!ev)
@@ -1378,7 +1560,7 @@ do_pth_wait (pth_event_t ev)
   /* Prepare all events which requires to launch helper threads for
      some types.  This creates an array of handles which are lates
      passed to WFMO. */
-  pos = threadlistidx = 0;
+  pos = thlstidx = 0;
   r = ev;
   do
     {
@@ -1388,35 +1570,44 @@ do_pth_wait (pth_event_t ev)
           if (DBG_INFO)
             fprintf (stderr, "pth_wait: add signal event\n");
           /* Register the global signal event.  */
-          evarray[pos] = ev;  
+          evarray[pos] = r;  
           waitbuf[pos++] = pth_signo_ev;
           break;
           
         case PTH_EVENT_FD:
           if (DBG_INFO)
             fprintf (stderr, "pth_wait: spawn wait_fd_thread\n");
-          evarray[pos] = ev;  
-          waitbuf[pos] = spawn_helper_thread (wait_fd_thread, r);
-          threadlist[threadlistidx++] = waitbuf[pos];
-          pos++;
+          evarray[pos] = r;  
+          waitbuf[pos++] = r->hd;
+          threadlist[thlstidx++] = spawn_helper_thread (wait_fd_thread, r);
           break;
           
         case PTH_EVENT_TIME:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: spawn wait_timer_thread\n");
-          evarray[pos] = ev;  
-          waitbuf[pos] = spawn_helper_thread (wait_timer_thread, r);
-          threadlist[threadlistidx++] = waitbuf[pos];
-          pos++;
+            fprintf (stderr, "pth_wait: adding timer event\n");
+          {
+            LARGE_INTEGER ll;
+
+            ll.QuadPart = - (r->u.tv.tv_sec * 10000000ll
+                             + r->u.tv.tv_usec * 10); 
+            if (!SetWaitableTimer (r->hd, &ll, 0, NULL, NULL, FALSE))
+              {
+                if (DBG_ERROR)
+                  fprintf (stderr,"%s: %s: SetWaitableTimer failed: %s\n",
+                           log_get_prefix (NULL), __func__,
+                           w32_strerror (strerr, sizeof strerr));
+                return -1;
+              }
+            evarray[pos] = r;  
+            waitbuf[pos++] = r->hd;
+          }
           break;
 
         case PTH_EVENT_SELECT:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: spawn wait_select_thread.\n");
-          evarray[pos] = ev;  
-          waitbuf[pos] = spawn_helper_thread (wait_select_thread, r);
-          threadlist[threadlistidx++] = waitbuf[pos];
-          pos++;
+            fprintf (stderr, "pth_wait: adding select event\n");
+          evarray[pos] = r;  
+          waitbuf[pos++] = r->hd;
           break;
 
         case PTH_EVENT_MUTEX:
@@ -1429,9 +1620,19 @@ do_pth_wait (pth_event_t ev)
   while ( r != ev );
 
   if (DBG_INFO)
-    fprintf (stderr, "%s: pth_wait: WFMO n=%d\n", log_get_prefix (NULL), pos);
+    {
+      fprintf (stderr, "%s: pth_wait: WFMO n=%d\n", 
+               log_get_prefix (NULL), pos);
+      for (i=0; i < pos; i++)
+        fprintf (stderr, "%s: pth_wait:      %d=%p\n", 
+                 log_get_prefix (NULL), i, waitbuf[i]);
+    }
   n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
-  for (i=0; i < threadlistidx; i++)
+  /* FIXME: We need to cancel all threads or keep them in a list so
+     that they are reused if we need to wait on the same event again.
+     Hmmm, that is all bullshit: We need to write a real
+     scheduler.  */
+  for (i=0; i < thlstidx; i++)
     CloseHandle (threadlist[i]);
   if (DBG_INFO)
     fprintf (stderr, "%s: pth_wait: WFMO returned %ld\n",
@@ -1443,14 +1644,112 @@ do_pth_wait (pth_event_t ev)
       /* At least one object has been signaled.  Walk over all events
          with an assigned handle and update the status.  We start at N
          which indicates the lowest signaled event.  */
-      for (count = 0, idx = n; idx < pos; idx++)
-        if (idx == n || WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
+      for (count = 0, idx = 0; idx < pos; idx++)
+        if (WaitForSingleObject (evarray[idx]->hd, 0) == WAIT_OBJECT_0)
           {
-            ResetEvent (evarray[idx]->hd);
-            evarray[idx]->status = PTH_STATUS_OCCURRED;
+            r = evarray[idx];
+
+            if (DBG_INFO)
+              fprintf (stderr, "%s: pth_wait: setting %d ev=%p\n",
+                       __func__, idx, r);
+            r->status = PTH_STATUS_OCCURRED;
             count++;
-            if (evarray[idx]->u_type == PTH_EVENT_SIGS)
-              *(evarray[idx]->u.sig.signo) = pth_signo;
+            switch (r->u_type)
+              {
+              case PTH_EVENT_SIGS:
+                *(r->u.sig.signo) = pth_signo;
+                break;
+              case PTH_EVENT_SELECT:
+                {
+                  struct fdarray_item_s fdarray[FD_SETSIZE];
+                  int nfdarray;
+                  WSANETWORKEVENTS ne;
+                  int ntotal = 0;
+                  unsigned long val;
+                  
+                  nfdarray = 0;
+                  nfdarray = build_fdarray (fdarray, nfdarray, 
+                                            ev->u.sel.rfds, 0 );
+                  nfdarray = build_fdarray (fdarray, nfdarray, 
+                                            ev->u.sel.wfds, 0 );
+                  nfdarray = build_fdarray (fdarray, nfdarray, 
+                                            ev->u.sel.efds, 0 );
+
+                  if (r->u.sel.rfds)
+                    FD_ZERO (r->u.sel.rfds);
+                  if (r->u.sel.wfds)
+                    FD_ZERO (r->u.sel.wfds);
+                  if (r->u.sel.efds)
+                    FD_ZERO (r->u.sel.efds);
+                  for (i=0; i < nfdarray; i++)
+                    {
+                      if (WSAEnumNetworkEvents (fdarray[i].fd, NULL, &ne))
+                        {
+                          if (DBG_ERROR)
+                            fprintf (stderr, 
+                                   "%s: pth_wait: "
+                                   "WSAEnumNetworkEvents(%d[%d]) failed: %s\n",
+                                   log_get_prefix (NULL), i, fdarray[i].fd,
+                                   wsa_strerror (strerr, sizeof strerr));
+                          continue;
+                        }
+
+                      if (r->u.sel.rfds 
+                          && (ne.lNetworkEvents & (FD_READ|FD_ACCEPT)))
+                        {
+                          FD_SET (fdarray[i].fd, r->u.sel.rfds);
+                          ntotal++;
+                        }
+                      if (r->u.sel.wfds 
+                          && (ne.lNetworkEvents & (FD_WRITE)))
+                        {
+                          FD_SET (fdarray[i].fd, r->u.sel.wfds);
+                          ntotal++;
+                        }
+                      if (r->u.sel.efds 
+                          && (ne.lNetworkEvents & (FD_OOB|FD_CLOSE)))
+                        {
+                          FD_SET (fdarray[i].fd, r->u.sel.efds);
+                          ntotal++;
+                        }
+
+                      /* Set the socket back to blocking mode.  */
+                      /* Fixme: Do thsi only if the socket was in
+                         blocking mode.  */
+                      if (WSAEventSelect (fdarray[i].fd, NULL, 0))
+                        {
+                          if (DBG_ERROR)
+                            fprintf (stderr, 
+                                 "%s: pth_wait: WSAEventSelect(%d[%d]-clear)"
+                                 " failed: %s\n",
+                                 log_get_prefix (NULL), i, fdarray[i].fd,
+                                 wsa_strerror (strerr, sizeof strerr));
+                        }
+
+                      val = 0;
+                      if (ioctlsocket (fdarray[i].fd, FIONBIO, &val)
+                          == SOCKET_ERROR)
+                        {
+                          if (DBG_ERROR)
+                            fprintf (stderr, 
+                                 "%s: pth_wait: ioctlsocket(%d[%d])"
+                                 " failed: %s\n",
+                                 log_get_prefix (NULL), i, fdarray[i].fd,
+                                 wsa_strerror (strerr, sizeof strerr));
+                        }
+
+
+                    }
+                  *r->u.sel.rc = ntotal;
+                }
+                break;
+              }
+            
+            /* We don't reset Timer events and I don't know whether
+               resetEvent will work at all.  SetWaitableTimer resets
+               the timer. */
+            if (r->u_type != PTH_EVENT_TIME)
+              reset_event (evarray[idx]->hd);
           }
       if (DBG_INFO)
         fprintf (stderr, "%s: pth_wait: %d events have been signalled\n",
@@ -1527,7 +1826,7 @@ void * thread (void * c)
 {
 
   Sleep (2000);
-  SetEvent (((pth_event_t)c)->hd);
+  set_event (((pth_event_t)c)->hd);
   fprintf (stderr, "\n\nhallo!.\n");
   pth_exit (NULL);
   return NULL;
