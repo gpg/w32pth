@@ -2,6 +2,7 @@ Program: W32PTH
 Maintainer: Werner Koch <wk@gnupg.org>
 Bug reports: <gnupg-devel@gnupg.org>  (public mailing list)
 Security related bug reports: <security@gnupg.org>
+License: LGPLv2+
 
 
 g10 Code GmbH
