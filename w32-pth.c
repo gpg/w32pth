@@ -804,6 +804,29 @@ pth_mutex_init (pth_mutex_t *mutex)
 }
 
 
+int
+pth_rwlock_init (pth_rwlock_t *rwlock)
+{
+  /* FIXME */
+  return pth_mutex_init (rwlock);
+}
+
+
+int
+pth_rwlock_acquire (pth_rwlock_t *rwlock, int op, int try, pth_event_t ev)
+{
+  /* FIXME */
+  return pth_mutex_acquire (rwlock, try, ev);
+}
+
+int
+pth_rwlock_release (pth_rwlock_t *rwlock)
+{
+  /* FIXME */
+  return pth_mutex_release (rwlock);
+}
+
+
 pth_attr_t
 pth_attr_new (void)
 {

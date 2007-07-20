@@ -10,12 +10,13 @@ the behaviour of PTH.
 It is currently limited to what GnuPG 2.0 requires.
 
 
-
 Missing stuff:
 
   PTH_MODE_STATIC is known but ignored.
   PTH_MODE_REUSE
   PTH_MODE_CHAIN
+
+  rwlock - currently just a mutex
 
   as well as many more things.
 

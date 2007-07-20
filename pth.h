@@ -74,6 +74,16 @@ enum
 /* Note: We can't do static initialization, thus we don't define the
    initializer PTH_MUTEX_INIT.  */
 
+/* Read-write lock values.  */
+enum
+  {
+    PTH_RWLOCK_RD,
+    PTH_RWLOCK_RW
+  };
+
+/* Note: We can't do static initialization, thus we don't define the
+   initializer PTH_RWLOCK_INIT.  */
+
 
 #define PTH_KEY_INIT	       (1<<0)
 
@@ -179,6 +189,9 @@ typedef void *pth_t;
 /* The Mutex object.  */
 typedef W32_PTH_HANDLE_INTERNAL pth_mutex_t;
 
+/* The read-write lock object.  */
+typedef W32_PTH_HANDLE_INTERNAL pth_rwlock_t;
+
 
 /* The Event object.  */
 struct pth_event_s;
@@ -223,6 +236,10 @@ int pth_connect (int fd, struct sockaddr *name, int namelen);
 int pth_mutex_release (pth_mutex_t *hd);
 int pth_mutex_acquire(pth_mutex_t *hd, int try_only, pth_event_t ev_extra);
 int pth_mutex_init (pth_mutex_t *hd);
+
+int pth_rwlock_init (pth_rwlock_t *rwlock);
+int pth_rwlock_acquire (pth_rwlock_t *rwlock, int op, int try, pth_event_t ev);
+int pth_rwlock_release (pth_rwlock_t *rwlock);
 
 
 pth_attr_t pth_attr_new (void);
