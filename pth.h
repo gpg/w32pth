@@ -270,6 +270,8 @@ pth_event_t pth_event (unsigned long spec, ...);
 
 int pth_sigmask (int how, const sigset_t *set, sigset_t *old);
 
+int pth_yield (pth_t tid);
+
 
 
 /*-- pth_util.c --*/

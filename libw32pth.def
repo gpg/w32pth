@@ -60,5 +60,10 @@ EXPORTS
 
       pth_select_ev  @33
       pth_sigmask  @34
-        
+
+      pth_rwlock_release  @35
+      pth_rwlock_acquire  @36
+      pth_rwlock_init  @37
+
+      pth_yield @38
 

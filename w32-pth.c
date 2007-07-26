@@ -1837,6 +1837,15 @@ pth_sigmask (int how, const sigset_t *set, sigset_t *old)
 }
 
 
+int
+pth_yield (pth_t tid)
+{
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+  Sleep (0);
+  leave_pth (__FUNCTION__);
+  return TRUE;
+}
 
 
 /* 
