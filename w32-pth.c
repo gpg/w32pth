@@ -481,19 +481,6 @@ pth_write (int fd, const void * buffer, size_t size)
 }
 
 
-int
-pth_select (int nfd, fd_set * rfds, fd_set * wfds, fd_set * efds,
-	    const struct timeval * timeout)
-{
-  int n;
-
-  implicit_init ();
-  enter_pth (__FUNCTION__);
-  n = select (nfd, rfds, wfds, efds, timeout);
-  leave_pth (__FUNCTION__);
-  return n;
-}
-
 static void
 show_event_ring (const char *text, pth_event_t ev)
 {
@@ -595,6 +582,14 @@ pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
 
   leave_pth (__FUNCTION__);
   return rc;
+}
+
+
+int
+pth_select (int nfd, fd_set * rfds, fd_set * wfds, fd_set * efds,
+	    const struct timeval * timeout)
+{
+  return pth_select_ev (nfd, rfds, wfds, efds, timeout, NULL);
 }
 
 
