@@ -61,6 +61,7 @@ static int pth_initialized;
 
 /* Keeps the current debug level. Define marcos to test them. */
 static int debug_level;
+static FILE *dbgfp;
 #define DBG_ERROR  (debug_level >= 1)
 #define DBG_INFO   (debug_level >= 2)
 #define DBG_CALLS  (debug_level >= 3)
@@ -189,7 +190,7 @@ create_event (void)
   if (!h)
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: CreateEvent failed: %s\n",
+        fprintf (dbgfp, "%s: CreateEvent failed: %s\n",
                  log_get_prefix (NULL), 
                  w32_strerror (strerr, sizeof strerr));
       return NULL;
@@ -199,7 +200,7 @@ create_event (void)
                         EVENT_MODIFY_STATE|SYNCHRONIZE, FALSE, 0 ) ) 
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: "
+        fprintf (dbgfp, "%s: "
                  "setting synchronize for event object %p failed: %s\n",
                  log_get_prefix (NULL), h,
                  w32_strerror (strerr, sizeof strerr));
@@ -209,7 +210,7 @@ create_event (void)
   CloseHandle (h);
   if (DBG_INFO)
     {
-      fprintf (stderr, "%s: CreateEvent(%p) succeeded\n",
+      fprintf (dbgfp, "%s: CreateEvent(%p) succeeded\n",
                log_get_prefix (NULL), h2);
     }
   return h2;
@@ -224,13 +225,13 @@ set_event (HANDLE h)
   if (!SetEvent (h))
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: SetEvent(%p) failed: %s\n",
+        fprintf (dbgfp, "%s: SetEvent(%p) failed: %s\n",
                  log_get_prefix (NULL), h,
                  w32_strerror (strerr, sizeof strerr));
     }
   else if (DBG_INFO)
     {
-      fprintf (stderr, "%s: SetEvent(%p) succeeded\n",
+      fprintf (dbgfp, "%s: SetEvent(%p) succeeded\n",
                log_get_prefix (NULL), h);
     }
 }
@@ -243,13 +244,13 @@ reset_event (HANDLE h)
   if (!ResetEvent (h))
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: ResetEvent(%p) failed: %s\n",
+        fprintf (dbgfp, "%s: ResetEvent(%p) failed: %s\n",
                  log_get_prefix (NULL), h,
                  w32_strerror (strerr, sizeof strerr));
     }
   else if (DBG_INFO)
     {
-      fprintf (stderr, "%s: ResetEvent(%p) succeeded\n",
+      fprintf (dbgfp, "%s: ResetEvent(%p) succeeded\n",
                log_get_prefix (NULL), h);
     }
 }
@@ -272,14 +273,14 @@ create_timer (void)
   if (!h)
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: CreateWaitableTimer failed: %s\n",
+        fprintf (dbgfp, "%s: CreateWaitableTimer failed: %s\n",
                  log_get_prefix (NULL), 
                  w32_strerror (strerr, sizeof strerr));
       return NULL;
     }
   if (DBG_INFO)
     {
-      fprintf (stderr, "%s: CreateWaitableTimer(%p) succeeded\n",
+      fprintf (dbgfp, "%s: CreateWaitableTimer(%p) succeeded\n",
                log_get_prefix (NULL), h);
     }
   return h;
@@ -290,14 +291,38 @@ int
 pth_init (void)
 {
   WSADATA wsadat;
-  const char *s;
-  
+  const char *s, *s1, *s2;
+  char *p;
+
   if (pth_initialized)
     return TRUE;
 
-  debug_level = (s=getenv ("DEBUG_PTH"))? atoi (s):0;
+  s = getenv ("PTH_DEBUG");
+  if (s)
+    {
+      debug_level = atoi (s);
+      s1 = strchr (s, ';');
+      if (s1)
+        {
+          s1++;
+          if (!(s2 = strchr (s1, ';')))
+            s2 = s1 + strlen (s1);
+          p = malloc (s2 - s1 + 1);
+          if (p)
+            {
+              memcpy (p, s1, s2-s1);
+              p[s2-s1] = 0;
+              dbgfp = fopen (p, "a");
+              if (dbgfp)
+                setvbuf (dbgfp, NULL, _IOLBF, 0);
+              free (p);
+            }
+        }
+    }
+  if (!dbgfp)
+    dbgfp = stderr;
   if (debug_level)
-    fprintf (stderr, "%s: pth_init: called.\n", log_get_prefix (NULL));
+    fprintf (dbgfp, "%s: pth_init: called.\n", log_get_prefix (NULL));
 
   if (WSAStartup (0x202, &wsadat))
     return FALSE;
@@ -339,7 +364,7 @@ enter_pth (const char *function)
   /* Fixme: I am not sure whether the same thread my enter a critical
      section twice.  */
   if (DBG_CALLS)
-    fprintf (stderr, "%s: enter_pth (%s)\n",
+    fprintf (dbgfp, "%s: enter_pth (%s)\n",
              log_get_prefix (NULL), function? function:"");
   LeaveCriticalSection (&pth_shd);
 }
@@ -350,7 +375,7 @@ leave_pth (const char *function)
 {
   EnterCriticalSection (&pth_shd);
   if (DBG_CALLS)
-    fprintf (stderr, "%s: leave_pth (%s)\n",
+    fprintf (dbgfp, "%s: leave_pth (%s)\n",
              log_get_prefix (NULL), function? function:"");
 }
 
@@ -417,7 +442,7 @@ pth_read (int fd,  void * buffer, size_t size)
           char strerr[256];
 
           if (DBG_ERROR)
-            fprintf (stderr, "%s: pth_read(%d) failed read from file: %s\n",
+            fprintf (dbgfp, "%s: pth_read(%d) failed read from file: %s\n",
                      log_get_prefix (NULL), fd,
                      w32_strerror (strerr, sizeof strerr));
           n = -1;
@@ -458,7 +483,7 @@ pth_write (int fd, const void * buffer, size_t size)
       if (!n)
         {
           if (DBG_ERROR)
-            fprintf (stderr, "%s: pth_write(%d) failed in write: %s\n",
+            fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
                      log_get_prefix (NULL), fd,
                      w32_strerror (strerr, sizeof strerr));
           n = -1;
@@ -471,7 +496,7 @@ pth_write (int fd, const void * buffer, size_t size)
       char strerr[256];
 
       if (DBG_ERROR)
-        fprintf (stderr, "%s: pth_write(%d) failed in send: %s\n",
+        fprintf (dbgfp, "%s: pth_write(%d) failed in send: %s\n",
                  log_get_prefix (NULL), fd,
                  w32_strerror (strerr, sizeof strerr));
       n = -1;
@@ -488,14 +513,14 @@ show_event_ring (const char *text, pth_event_t ev)
 
   if (!ev)
     {
-      fprintf (stderr, "show_event_ring(%s):  No ring\n", text);
+      fprintf (dbgfp, "show_event_ring(%s):  No ring\n", text);
       return;
     }
 
   r = ev;
   do
     {
-      fprintf (stderr, "show_event_ring(%s): type=%d r=%p prev=%p next=%p\n",
+      fprintf (dbgfp, "show_event_ring(%s): type=%d r=%p prev=%p next=%p\n",
                text, r->u_type, r, r->prev, r->next);
     }
   while (r=r->next, r != ev);
@@ -717,7 +742,7 @@ pth_mutex_release (pth_mutex_t *mutex)
       char strerr[256];
 
       if (DBG_ERROR)
-        fprintf (stderr, "%s: pth_release_mutex %p failed: %s\n",
+        fprintf (dbgfp, "%s: pth_release_mutex %p failed: %s\n",
                  log_get_prefix (NULL), *mutex,
                  w32_strerror (strerr, sizeof strerr));
       rc = FALSE;
@@ -749,7 +774,7 @@ pth_mutex_acquire (pth_mutex_t *mutex, int tryonly, pth_event_t ev_extra)
           char strerr[256];
           
           if (DBG_ERROR)
-            fprintf (stderr, "%s: pth_mutex_acquire for %p failed: %s\n",
+            fprintf (dbgfp, "%s: pth_mutex_acquire for %p failed: %s\n",
                      log_get_prefix (NULL), *mutex,
                      w32_strerror (strerr, sizeof strerr));
         }
@@ -762,7 +787,7 @@ pth_mutex_acquire (pth_mutex_t *mutex, int tryonly, pth_event_t ev_extra)
 
       default:
         if (DBG_ERROR)
-          fprintf (stderr, "%s: WaitForSingleObject returned unexpected "
+          fprintf (dbgfp, "%s: WaitForSingleObject returned unexpected "
                    "code %d for mutex %p\n",
                    log_get_prefix (NULL), code, *mutex);
         rc = FALSE;
@@ -865,7 +890,7 @@ pth_attr_set (pth_attr_t hd, int field, ...)
         {
           hd->flags |= PTH_ATTR_JOINABLE;
           if (DBG_INFO)
-            fprintf (stderr, "%s: pth_attr_set: PTH_ATTR_JOINABLE\n",
+            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_JOINABLE\n",
                      log_get_prefix (NULL));
         }
       break;
@@ -877,7 +902,7 @@ pth_attr_set (pth_attr_t hd, int field, ...)
           hd->flags |= PTH_ATTR_STACK_SIZE;
           hd->stack_size = val;
           if (DBG_INFO)
-            fprintf (stderr, "%s: pth_attr_set: PTH_ATTR_STACK_SIZE %d\n",
+            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_STACK_SIZE %d\n",
                      log_get_prefix (NULL), val);
         }
       break;
@@ -893,7 +918,7 @@ pth_attr_set (pth_attr_t hd, int field, ...)
             return FALSE;
           hd->flags |= PTH_ATTR_NAME;
           if (DBG_INFO)
-            fprintf (stderr, "%s: pth_attr_set: PTH_ATTR_NAME %s\n",
+            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_NAME %s\n",
                      log_get_prefix (NULL), hd->name);
         }
       break;
@@ -939,14 +964,14 @@ do_pth_spawn (pth_attr_t hd, void *(*func)(void *), void *arg)
      FIXME: We should not use W32's thread handle directly but keep
      our own thread control structure.  CTX may be used for that.  */
   if (DBG_INFO)
-    fprintf (stderr, "%s: do_pth_spawn creating thread ...\n",
+    fprintf (dbgfp, "%s: do_pth_spawn creating thread ...\n",
              log_get_prefix (NULL));
   th = CreateThread (&sa, hd->stack_size,
                      (LPTHREAD_START_ROUTINE)launch_thread,
                      ctx, CREATE_SUSPENDED, &tid);
   ctx->th = th;
   if (DBG_INFO)
-    fprintf (stderr, "%s: do_pth_spawn created thread %p\n",
+    fprintf (dbgfp, "%s: do_pth_spawn created thread %p\n",
              log_get_prefix (NULL),th);
   if (!th)
     free (ctx);
@@ -1084,7 +1109,7 @@ sig_handler (DWORD signo)
   /* Fixme: We can keep only track of one signal at a time. */
   set_event (pth_signo_ev);
   if (DBG_INFO)
-    fprintf (stderr, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
+    fprintf (dbgfp, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
   return TRUE;
 }
 
@@ -1127,13 +1152,13 @@ do_pth_event_body (unsigned long spec, va_list arg)
   if ((spec & (PTH_MODE_CHAIN|PTH_MODE_REUSE)))
     {
       if (DBG_ERROR)
-        fprintf (stderr, "%s: pth_event spec=%lu - not supported\n", 
+        fprintf (dbgfp, "%s: pth_event spec=%lu - not supported\n", 
                  log_get_prefix (NULL), spec);
       return NULL; /* Not supported.  */
     }
 
   if (DBG_INFO)
-    fprintf (stderr, "%s: pth_event spec=%lu\n", log_get_prefix (NULL), spec);
+    fprintf (dbgfp, "%s: pth_event spec=%lu\n", log_get_prefix (NULL), spec);
 
   ev = calloc (1, sizeof *ev);
   if (!ev)
@@ -1170,7 +1195,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
       /* The signal handler is disabled for now.  */
       rc = 0/*SetConsoleCtrlHandler (sig_handler, TRUE)*/;
       if (DBG_INFO)
-        fprintf (stderr, "%s: pth_event: sigs rc=%d\n",
+        fprintf (dbgfp, "%s: pth_event: sigs rc=%d\n",
                  log_get_prefix (NULL), rc);
     }
   else if (spec & PTH_EVENT_FD)
@@ -1180,7 +1205,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
       ev->u_type = PTH_EVENT_FD;
       ev->u.fd = va_arg (arg, int);
       if (DBG_INFO)
-        fprintf (stderr, "%s: pth_event: fd=%d\n",
+        fprintf (dbgfp, "%s: pth_event: fd=%d\n",
                  log_get_prefix (NULL), ev->u.fd);
     }
   else if (spec & PTH_EVENT_TIME)
@@ -1220,7 +1245,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
           if (WSAEventSelect (fdarray[i].fd, ev->hd, fdarray[i].netevents))
             {
               if (DBG_ERROR)
-                fprintf (stderr, 
+                fprintf (dbgfp, 
                          "%s: pth_event: WSAEventSelect(%d[%d]) failed: %s\n",
                          log_get_prefix (NULL), i, fdarray[i].fd,
                          wsa_strerror (strerr, sizeof strerr));
@@ -1311,7 +1336,7 @@ wait_for_fd (int fd, int is_read, int nwait)
     {
       n = select (fd+1, &r, &w, NULL, &tv);
       if (DBG_INFO)
-        fprintf (stderr, "%s: wait_for_fd=%d fd %d (ec=%d)\n",
+        fprintf (dbgfp, "%s: wait_for_fd=%d fd %d (ec=%d)\n",
                  log_get_prefix (NULL), n, fd,(int)WSAGetLastError ());
       if (n == -1)
         break;
@@ -1516,13 +1541,13 @@ spawn_helper_thread (void *(*func)(void *), void *arg)
   sa.nLength = sizeof sa;
 
   if (DBG_INFO)
-    fprintf (stderr, "%s: spawn_helper_thread creating thread ...\n",
+    fprintf (dbgfp, "%s: spawn_helper_thread creating thread ...\n",
              log_get_prefix (NULL));
   th = CreateThread (&sa, 32*1024,
                      (LPTHREAD_START_ROUTINE)func,
                      arg, 0, &tid);
   if (DBG_INFO)
-    fprintf (stderr, "%s: spawn_helper_thread created thread %p\n",
+    fprintf (dbgfp, "%s: spawn_helper_thread created thread %p\n",
              log_get_prefix (NULL), th);
 
   return th;
@@ -1537,7 +1562,7 @@ wait_fd_thread (void * ctx)
 
   wait_for_fd (ev->u.fd, ev->flags & PTH_UNTIL_FD_READABLE, 3600);
   if (DBG_INFO)
-    fprintf (stderr, "%s: wait_fd_thread: exit.\n", log_get_prefix (NULL));
+    fprintf (dbgfp, "%s: wait_fd_thread: exit.\n", log_get_prefix (NULL));
   set_event (ev->hd);
   ExitThread (0);
   return NULL;
@@ -1564,7 +1589,7 @@ do_pth_wait (pth_event_t ev)
     return -1;
 
   if (DBG_INFO)
-    fprintf (stderr, "%s: pth_wait: cnt %lu\n", log_get_prefix (NULL), n);
+    fprintf (dbgfp, "%s: pth_wait: cnt %lu\n", log_get_prefix (NULL), n);
 
   /* Set all events to pending.  */
   r = ev;
@@ -1586,7 +1611,7 @@ do_pth_wait (pth_event_t ev)
         {
         case PTH_EVENT_SIGS:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: add signal event\n");
+            fprintf (dbgfp, "pth_wait: add signal event\n");
           /* Register the global signal event.  */
           evarray[pos] = r;  
           waitbuf[pos++] = pth_signo_ev;
@@ -1594,7 +1619,7 @@ do_pth_wait (pth_event_t ev)
           
         case PTH_EVENT_FD:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: spawn wait_fd_thread\n");
+            fprintf (dbgfp, "pth_wait: spawn wait_fd_thread\n");
           evarray[pos] = r;  
           waitbuf[pos++] = r->hd;
           threadlist[thlstidx++] = spawn_helper_thread (wait_fd_thread, r);
@@ -1602,7 +1627,7 @@ do_pth_wait (pth_event_t ev)
           
         case PTH_EVENT_TIME:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: adding timer event\n");
+            fprintf (dbgfp, "pth_wait: adding timer event\n");
           {
             LARGE_INTEGER ll;
 
@@ -1611,7 +1636,7 @@ do_pth_wait (pth_event_t ev)
             if (!SetWaitableTimer (r->hd, &ll, 0, NULL, NULL, FALSE))
               {
                 if (DBG_ERROR)
-                  fprintf (stderr,"%s: %s: SetWaitableTimer failed: %s\n",
+                  fprintf (dbgfp,"%s: %s: SetWaitableTimer failed: %s\n",
                            log_get_prefix (NULL), __func__,
                            w32_strerror (strerr, sizeof strerr));
                 return -1;
@@ -1623,14 +1648,14 @@ do_pth_wait (pth_event_t ev)
 
         case PTH_EVENT_SELECT:
           if (DBG_INFO)
-            fprintf (stderr, "pth_wait: adding select event\n");
+            fprintf (dbgfp, "pth_wait: adding select event\n");
           evarray[pos] = r;  
           waitbuf[pos++] = r->hd;
           break;
 
         case PTH_EVENT_MUTEX:
           if (DBG_ERROR)
-            fprintf (stderr, "pth_wait: ignoring mutex event.\n");
+            fprintf (dbgfp, "pth_wait: ignoring mutex event.\n");
           break;
         }
       r = r->next;
@@ -1639,10 +1664,10 @@ do_pth_wait (pth_event_t ev)
 
   if (DBG_INFO)
     {
-      fprintf (stderr, "%s: pth_wait: WFMO n=%d\n", 
+      fprintf (dbgfp, "%s: pth_wait: WFMO n=%d\n", 
                log_get_prefix (NULL), pos);
       for (i=0; i < pos; i++)
-        fprintf (stderr, "%s: pth_wait:      %d=%p\n", 
+        fprintf (dbgfp, "%s: pth_wait:      %d=%p\n", 
                  log_get_prefix (NULL), i, waitbuf[i]);
     }
   n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
@@ -1653,7 +1678,7 @@ do_pth_wait (pth_event_t ev)
   for (i=0; i < thlstidx; i++)
     CloseHandle (threadlist[i]);
   if (DBG_INFO)
-    fprintf (stderr, "%s: pth_wait: WFMO returned %ld\n",
+    fprintf (dbgfp, "%s: pth_wait: WFMO returned %ld\n",
              log_get_prefix (NULL), n);
 
   if (n >= 0 && n < pos)
@@ -1668,7 +1693,7 @@ do_pth_wait (pth_event_t ev)
             r = evarray[idx];
 
             if (DBG_INFO)
-              fprintf (stderr, "%s: pth_wait: setting %d ev=%p\n",
+              fprintf (dbgfp, "%s: pth_wait: setting %d ev=%p\n",
                        __func__, idx, r);
             r->status = PTH_STATUS_OCCURRED;
             count++;
@@ -1704,7 +1729,7 @@ do_pth_wait (pth_event_t ev)
                       if (WSAEnumNetworkEvents (fdarray[i].fd, NULL, &ne))
                         {
                           if (DBG_ERROR)
-                            fprintf (stderr, 
+                            fprintf (dbgfp, 
                                    "%s: pth_wait: "
                                    "WSAEnumNetworkEvents(%d[%d]) failed: %s\n",
                                    log_get_prefix (NULL), i, fdarray[i].fd,
@@ -1737,7 +1762,7 @@ do_pth_wait (pth_event_t ev)
                       if (WSAEventSelect (fdarray[i].fd, NULL, 0))
                         {
                           if (DBG_ERROR)
-                            fprintf (stderr, 
+                            fprintf (dbgfp, 
                                  "%s: pth_wait: WSAEventSelect(%d[%d]-clear)"
                                  " failed: %s\n",
                                  log_get_prefix (NULL), i, fdarray[i].fd,
@@ -1749,7 +1774,7 @@ do_pth_wait (pth_event_t ev)
                           == SOCKET_ERROR)
                         {
                           if (DBG_ERROR)
-                            fprintf (stderr, 
+                            fprintf (dbgfp, 
                                  "%s: pth_wait: ioctlsocket(%d[%d])"
                                  " failed: %s\n",
                                  log_get_prefix (NULL), i, fdarray[i].fd,
@@ -1770,7 +1795,7 @@ do_pth_wait (pth_event_t ev)
               reset_event (evarray[idx]->hd);
           }
       if (DBG_INFO)
-        fprintf (stderr, "%s: pth_wait: %d events have been signalled\n",
+        fprintf (dbgfp, "%s: pth_wait: %d events have been signalled\n",
                  log_get_prefix (NULL), count);
       return count;
     }
