@@ -12,6 +12,8 @@
   notification, by all select threads in one invocation, and have the 
   threads listen on both the socket and the shutdown event.
 
+* I think the pth_wait on socket implementation leaks event objects.
+
 * The whole wait stuff needs to be cleaned up.  In particular, it is 
   vital that it is clarified which events get reset before pth_wait 
   returns and which are not.  Tentatively I think that none should be 
