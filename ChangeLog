@@ -1,5 +1,11 @@
 2008-02-12  Marcus Brinkmann  <marcus@g10code.de>
 
+	* Makefile.in: Removed.
+	* w32-pth.c (NO_PTH_MODE_STATIC): New macro.  Use it everywhere
+	where we have to release event resources.
+	(spawn_helper_thread, wait_fd_thread, wait_for_fd): Removed.
+	(do_pth_wait): Use WSAEventSelect for sockets.
+
 	* Makefile.am (libw32pth_la_SOURCES): Add debug.h, w32-io.h and
 	w32-io.c.
 	* libw32pth.def: Add pth_pipe, pth_close.

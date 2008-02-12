@@ -57,6 +57,9 @@
 #error long long is not 64 bit
 #endif
 
+/* FIXME: We can only undefine this when we have static thread-local
+   event allocation.  */
+#define NO_PTH_MODE_STATIC 1
 
 /* States whether this module has been initialized.  */
 static int pth_initialized;
@@ -497,14 +500,19 @@ pth_read_ev (int fd, void *buffer, size_t size, pth_event_t ev_extra)
   if (ev_extra)
     {
       pth_event_isolate (ev);
-
       if (ev->status != PTH_STATUS_OCCURRED)
 	{
+#ifdef NO_PTH_MODE_STATIC
+	  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 	  errno = EINTR;
 	  leave_pth (__FUNCTION__);
 	  return -1;
 	}
     }
+#ifdef NO_PTH_MODE_STATIC
+  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 
   n = do_pth_read (fd, buffer, size);
 
@@ -594,11 +602,17 @@ pth_write_ev (int fd, const void *buffer, size_t size, pth_event_t ev_extra)
 
       if (pth_event_status(ev) != PTH_STATUS_OCCURRED)
 	{
+#ifdef NO_PTH_MODE_STATIC
+  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 	  errno = EINTR;
 	  leave_pth (__FUNCTION__);
 	  return -1;
 	}
     }
+#ifdef NO_PTH_MODE_STATIC
+  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 
   n = do_pth_write (fd, buffer, size);
 
@@ -818,12 +832,19 @@ pth_accept_ev (int fd, struct sockaddr *addr, int *addrlen,
           pth_event_isolate (ev);
           if (ev && ev->status != PTH_STATUS_OCCURRED)
             {
+#ifdef NO_PTH_MODE_STATIC
+	      do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
               pth_fdmode (fd, fdmode);
               leave_pth (__FUNCTION__);
               return -1;
             }
         }
     }
+#ifdef NO_PTH_MODE_STATIC
+  if (ev)
+    do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 
   pth_fdmode (fd, fdmode);
   leave_pth (__FUNCTION__);
@@ -1189,8 +1210,11 @@ do_pth_waitpid (unsigned pid, int * status, int options)
 
       /* else wait a little bit */
       ev = pth_event(PTH_EVENT_TIME|PTH_MODE_STATIC, &ev_key,
-                     pth_timeout (0,250000));
+		     pth_timeout (0,250000));
       pth_wait(ev);
+#ifdef NO_PTH_MODE_STATIC
+      do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
     }
 
   pth_debug2("pth_waitpid: leave to thread \"%s\"", pth_current->name);
@@ -1293,7 +1317,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
 
   /* We don't support static yet but we need to consume the
      argument.  */
-  if ( (spec & PTH_MODE_STATIC) )
+  if ((spec & PTH_MODE_STATIC))
     {
       ev->flags |= PTH_MODE_STATIC;
       va_arg (arg, pth_key_t *);
@@ -1430,43 +1454,6 @@ pth_event_concat (pth_event_t head, ...)
   last->prev = ev;
 
   return head;
-}
-
-
-static int
-wait_for_fd (int fd, int is_read, int nwait)
-{
-  struct timeval tv;
-  fd_set r;
-  fd_set w;
-  int n;
-
-  FD_ZERO (&r);
-  FD_ZERO (&w);    
-  FD_SET (fd, is_read ? &r : &w);
-
-  tv.tv_sec = nwait;
-  tv.tv_usec = 0;
-
-  while (1)
-    {
-      n = select (fd+1, &r, &w, NULL, &tv);
-      if (DBG_INFO)
-        fprintf (dbgfp, "%s: wait_for_fd=%d fd %d (ec=%d)\n",
-                 log_get_prefix (NULL), n, fd,(int)WSAGetLastError ());
-      if (n == -1)
-        break;
-      if (!n)
-        continue;
-      if (n == 1)
-        {
-          if (is_read && FD_ISSET (fd, &r))
-            break;
-          else if (FD_ISSET (fd, &w))
-            break;
-        }
-    }
-  return 0;
 }
 
 
@@ -1641,62 +1628,16 @@ event_count (pth_event_t ev)
 
 
 
-static pth_t
-spawn_helper_thread (void *(*func)(void *), void *arg)
-{
-  SECURITY_ATTRIBUTES sa;
-  DWORD tid;
-  HANDLE th;
-
-  memset (&sa, 0, sizeof sa);
-  sa.bInheritHandle = TRUE;
-  sa.lpSecurityDescriptor = NULL;
-  sa.nLength = sizeof sa;
-
-  /* FIXME: We should poll the socket non-blockingly first, as
-     otherwise we might be starved by a concurrent timer event.  Also,
-     this helps us to update the event status (set/reset it here)
-     properly.  See note in do_pth_wait below.  */
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: spawn_helper_thread creating thread ...\n",
-             log_get_prefix (NULL));
-  th = CreateThread (&sa, 32*1024,
-                     (LPTHREAD_START_ROUTINE)func,
-                     arg, 0, &tid);
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: spawn_helper_thread created thread %p\n",
-             log_get_prefix (NULL), th);
-
-  return th;
-}
-
-
-
-static void *
-wait_fd_thread (void * ctx)
-{
-  pth_event_t ev = ctx;
-
-  wait_for_fd (ev->u.fd, ev->flags & PTH_UNTIL_FD_READABLE, 3600);
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: wait_fd_thread: exit.\n", log_get_prefix (NULL));
-  set_event (ev->hd);
-  ExitThread (0);
-  return NULL;
-}
-
-
-
 static int
 do_pth_wait (pth_event_t ev)
 {
   char strerr[256];
   HANDLE waitbuf[MAXIMUM_WAIT_OBJECTS/2];
   pth_event_t evarray[MAXIMUM_WAIT_OBJECTS/2];
-  HANDLE threadlist[MAXIMUM_WAIT_OBJECTS/2];
   DWORD n;
   int pos, idx, thlstidx, i;
   pth_event_t r;
+  int count;
 
   if (!ev)
     return 0;
@@ -1736,17 +1677,35 @@ do_pth_wait (pth_event_t ev)
           
         case PTH_EVENT_FD:
 	  {
+	    int res;
 	    int fd = r->u.fd;
 	    int is_socket = fd_is_socket (fd);
 
 	    if (is_socket)
 	      {
-		if (DBG_INFO)
-		  fprintf (dbgfp, "pth_wait: spawn wait_fd_thread\n");
+		WSAEVENT sockevent = WSACreateEvent ();
+		long flags;
 
-		evarray[pos] = r;  
-		waitbuf[pos++] = r->hd;
-		threadlist[thlstidx++] = spawn_helper_thread (wait_fd_thread, r);
+		/* Note: This restricts us to one event in one active
+		   wait per socket.  But that's commonly the case
+		   anyway.  */
+		if (r->flags & PTH_UNTIL_FD_READABLE)
+		  flags = FD_READ | FD_ACCEPT;
+		else
+		  flags = FD_WRITE;
+
+		res = WSAEventSelect (fd, sockevent, flags);
+		if (res)
+		  {
+		    if (DBG_ERROR)
+		      fprintf (dbgfp, "%s: can't set event for FD 0x%x "
+			       "(ignored)\n", log_get_prefix (NULL), fd);
+		  }
+		else
+		  {
+		    evarray[pos] = r;
+		    waitbuf[pos++] = sockevent;
+		  }
 	      }
 	    else
 	      {
@@ -1833,149 +1792,158 @@ do_pth_wait (pth_event_t ev)
                  log_get_prefix (NULL), i, waitbuf[i]);
     }
   n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
-  /* FIXME: We need to cancel all threads or keep them in a list so
-     that they are reused if we need to wait on the same event again.
-     Hmmm, that is all bullshit: We need to write a real
-     scheduler.  */
-  for (i=0; i < thlstidx; i++)
-    CloseHandle (threadlist[i]);
   if (DBG_INFO)
     fprintf (dbgfp, "%s: pth_wait: WFMO returned %ld\n",
              log_get_prefix (NULL), n);
+  count = 0;
 
-  if (n >= 0 && n < pos)
+  /* Walk over all events with an assigned handle and update the
+     status.  Note: This may override the return value of WFMO.  */
+  for (idx = 0; idx < pos; idx++)
     {
-      int count;
-      /* At least one object has been signaled.  Walk over all events
-         with an assigned handle and update the status.  We start at N
-         which indicates the lowest signaled event.  */
-      for (count = 0, idx = 0; idx < pos; idx++)
-        if (WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
-          {
-            r = evarray[idx];
+      r = evarray[idx];
+      
+      if (WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
+	{
+	  if (DBG_INFO)
+	    fprintf (dbgfp, "%s: pth_wait: setting %d ev=%p\n",
+		     __func__, idx, r);
+	  r->status = PTH_STATUS_OCCURRED;
+	  count++;
 
-            if (DBG_INFO)
-              fprintf (dbgfp, "%s: pth_wait: setting %d ev=%p\n",
-                       __func__, idx, r);
-            r->status = PTH_STATUS_OCCURRED;
-            count++;
-            switch (r->u_type)
-              {
-              case PTH_EVENT_SIGS:
-                *(r->u.sig.signo) = pth_signo;
-                break;
-              case PTH_EVENT_SELECT:
-                {
-                  struct fdarray_item_s fdarray[FD_SETSIZE];
-                  int nfdarray;
-                  WSANETWORKEVENTS ne;
-                  int ntotal = 0;
-                  unsigned long val;
-                  
-                  nfdarray = 0;
-                  nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            r->u.sel.rfds, 0 );
-                  nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            r->u.sel.wfds, 0 );
-                  nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            r->u.sel.efds, 0 );
+	  switch (r->u_type)
+	    {
+	    case PTH_EVENT_SIGS:
+	      *(r->u.sig.signo) = pth_signo;
+	      break;
+	  
+	    case PTH_EVENT_SELECT:
+	      {
+		struct fdarray_item_s fdarray[FD_SETSIZE];
+		int nfdarray;
+		WSANETWORKEVENTS ne;
+		int ntotal = 0;
+		unsigned long val;
+		
+		nfdarray = 0;
+		nfdarray = build_fdarray (fdarray, nfdarray, r->u.sel.rfds, 0);
+		nfdarray = build_fdarray (fdarray, nfdarray, r->u.sel.wfds, 0);
+		nfdarray = build_fdarray (fdarray, nfdarray, r->u.sel.efds, 0);
+		
+		if (r->u.sel.rfds)
+		  FD_ZERO (r->u.sel.rfds);
+		if (r->u.sel.wfds)
+		  FD_ZERO (r->u.sel.wfds);
+		if (r->u.sel.efds)
+		  FD_ZERO (r->u.sel.efds);
+		for (i=0; i < nfdarray; i++)
+		  {
+		    if (WSAEnumNetworkEvents (fdarray[i].fd, NULL, &ne))
+		      {
+			if (DBG_ERROR)
+			  fprintf (dbgfp, 
+				   "%s: pth_wait: "
+				   "WSAEnumNetworkEvents(%d[%d]) failed: %s\n",
+				   log_get_prefix (NULL), i, fdarray[i].fd,
+				   wsa_strerror (strerr, sizeof strerr));
+			continue;
+		      }
+		    
+		    if (r->u.sel.rfds 
+			&& (ne.lNetworkEvents & (FD_READ|FD_ACCEPT)))
+		      {
+			FD_SET (fdarray[i].fd, r->u.sel.rfds);
+			ntotal++;
+		      }
+		    if (r->u.sel.wfds 
+			&& (ne.lNetworkEvents & (FD_WRITE)))
+		      {
+			FD_SET (fdarray[i].fd, r->u.sel.wfds);
+			ntotal++;
+		      }
+		    if (r->u.sel.efds 
+			&& (ne.lNetworkEvents & (FD_OOB|FD_CLOSE)))
+		      {
+			FD_SET (fdarray[i].fd, r->u.sel.efds);
+			ntotal++;
+		      }
+		    
+		    /* Set the socket back to blocking mode.  */
+		    /* Fixme: Do this only if the socket was in
+		       blocking mode.  */
+		    if (WSAEventSelect (fdarray[i].fd, NULL, 0))
+		      {
+			if (DBG_ERROR)
+			  fprintf (dbgfp, 
+				   "%s: pth_wait: WSAEventSelect(%d[%d]-clear)"
+				   " failed: %s\n",
+				   log_get_prefix (NULL), i, fdarray[i].fd,
+				   wsa_strerror (strerr, sizeof strerr));
+		      }
+		    
+		    val = 0;
+		    if (ioctlsocket (fdarray[i].fd, FIONBIO, &val)
+			== SOCKET_ERROR)
+		      {
+			if (DBG_ERROR)
+			  fprintf (dbgfp, 
+				   "%s: pth_wait: ioctlsocket(%d[%d])"
+				   " failed: %s\n",
+				   log_get_prefix (NULL), i, fdarray[i].fd,
+				   wsa_strerror (strerr, sizeof strerr));
+		      }
+		  }
+		*r->u.sel.rc = ntotal;
+	      }
+	      break;
+	    }
 
-                  if (r->u.sel.rfds)
-                    FD_ZERO (r->u.sel.rfds);
-                  if (r->u.sel.wfds)
-                    FD_ZERO (r->u.sel.wfds);
-                  if (r->u.sel.efds)
-                    FD_ZERO (r->u.sel.efds);
-                  for (i=0; i < nfdarray; i++)
-                    {
-                      if (WSAEnumNetworkEvents (fdarray[i].fd, NULL, &ne))
-                        {
-                          if (DBG_ERROR)
-                            fprintf (dbgfp, 
-                                   "%s: pth_wait: "
-                                   "WSAEnumNetworkEvents(%d[%d]) failed: %s\n",
-                                   log_get_prefix (NULL), i, fdarray[i].fd,
-                                   wsa_strerror (strerr, sizeof strerr));
-                          continue;
-                        }
+	  /* We don't reset Timer events and I don't know whether
+	     resetEvent will work at all.  SetWaitableTimer resets the
+	     timer.  FIXME.  Note by MB: Resetting the event here
+	     seems wrong in most (all?)  cases, as the event is still
+	     "hot" for all we know: A second pth_wait with the same
+	     events should return with the same results as the
+	     previous one immediatetly.  For example, data on a socket
+	     or pipe is still readable after.  Reset should happen in
+	     pth_read/pth_write in this case, but these functions need
+	     to do a quick poll as well.  Consider for example a
+	     pth_read_ev where multiple events occur.  See w32-io.c
+	     how this works for pipes.  FIXME: Frankly, this is a
+	     mess.  For example, make sure the below is fine with the
+	     global signal event.  Note: This is related to
+	     edge-triggered vs level-triggered.  Level triggered is
+	     doubleplusgood.  */
+	  if (r->u_type != PTH_EVENT_TIME && r->u_type != PTH_EVENT_FD)
+	    reset_event (waitbuf[idx]);
+	}
 
-                      if (r->u.sel.rfds 
-                          && (ne.lNetworkEvents & (FD_READ|FD_ACCEPT)))
-                        {
-                          FD_SET (fdarray[i].fd, r->u.sel.rfds);
-                          ntotal++;
-                        }
-                      if (r->u.sel.wfds 
-                          && (ne.lNetworkEvents & (FD_WRITE)))
-                        {
-                          FD_SET (fdarray[i].fd, r->u.sel.wfds);
-                          ntotal++;
-                        }
-                      if (r->u.sel.efds 
-                          && (ne.lNetworkEvents & (FD_OOB|FD_CLOSE)))
-                        {
-                          FD_SET (fdarray[i].fd, r->u.sel.efds);
-                          ntotal++;
-                        }
-
-                      /* Set the socket back to blocking mode.  */
-                      /* Fixme: Do thsi only if the socket was in
-                         blocking mode.  */
-                      if (WSAEventSelect (fdarray[i].fd, NULL, 0))
-                        {
-                          if (DBG_ERROR)
-                            fprintf (dbgfp, 
-                                 "%s: pth_wait: WSAEventSelect(%d[%d]-clear)"
-                                 " failed: %s\n",
-                                 log_get_prefix (NULL), i, fdarray[i].fd,
-                                 wsa_strerror (strerr, sizeof strerr));
-                        }
-
-                      val = 0;
-                      if (ioctlsocket (fdarray[i].fd, FIONBIO, &val)
-                          == SOCKET_ERROR)
-                        {
-                          if (DBG_ERROR)
-                            fprintf (dbgfp, 
-                                 "%s: pth_wait: ioctlsocket(%d[%d])"
-                                 " failed: %s\n",
-                                 log_get_prefix (NULL), i, fdarray[i].fd,
-                                 wsa_strerror (strerr, sizeof strerr));
-                        }
-
-
-                    }
-                  *r->u.sel.rc = ntotal;
-                }
-                break;
-              }
-            
-            /* We don't reset Timer events and I don't know whether
-               resetEvent will work at all.  SetWaitableTimer resets
-               the timer.  FIXME.  Note by MB: Resetting the event
-               here seems wrong in most (all?) cases, as the event is
-               still "hot" for all we know: A second pth_wait with the
-               same events should return with the same results as the
-               previous one immediatetly.  For example, data on a
-               socket or pipe is still readable after.  Reset should
-               happen in pth_read/pth_write in this case, but these
-               functions need to do a quick poll as well.  Consider
-               for example a pth_read_ev where multiple events occur.
-               See w32-io.c how this works for pipes.  FIXME: Frankly,
-               this is a mess.  For example, make sure the below is
-               fine with the global signal event.  */
-/* We use HD for sockets, but something else for pipes.  */
-#define IS_PIPE(i) (evarray[i]->u_type == PTH_EVENT_FD \
-		    && evarray[i]->hd != waitbuf[i])
-
-            if (r->u_type != PTH_EVENT_TIME && ! IS_PIPE (idx))
-              reset_event (waitbuf[idx]);
-          }
-      if (DBG_INFO)
-        fprintf (dbgfp, "%s: pth_wait: %d events have been signalled\n",
-                 log_get_prefix (NULL), count);
-      return count;
+      /* Clean up allocated resources in any case.  */
+      switch (r->u_type)
+	{
+	case PTH_EVENT_FD:
+	  {
+	    int fd = r->u.fd;
+	    int is_socket = fd_is_socket (fd);
+	    
+	    if (is_socket)
+	      {
+		WSAEventSelect (fd, NULL, 0);
+		WSACloseEvent (waitbuf[idx]);
+		waitbuf[idx] = NULL;
+	      }
+	    /* Nothing to be done for pipes.  */
+	  }
+	  break;
+	}
     }
+
+  if (DBG_INFO)
+    fprintf (dbgfp, "%s: pth_wait: %d events have been signalled\n",
+	     log_get_prefix (NULL), count);
+
+  if (count)
+    return count;
   else if (n == WAIT_TIMEOUT)
     return 0;
   else
@@ -2019,7 +1987,9 @@ pth_sleep (int sec)
       return -1;
     }
   do_pth_wait (ev);
-  do_pth_event_free (ev, PTH_FREE_ALL);
+#ifdef NO_PTH_MODE_STATIC
+  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
 
   leave_pth (__FUNCTION__);
   return 0;
