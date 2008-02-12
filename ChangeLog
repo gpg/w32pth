@@ -1,3 +1,27 @@
+2008-02-12  Marcus Brinkmann  <marcus@g10code.de>
+
+	* Makefile.am (libw32pth_la_SOURCES): Add debug.h, w32-io.h and
+	w32-io.c.
+	* libw32pth.def: Add pth_pipe, pth_close.
+	* pth.h (pth_pipe, pth_close): New prototypes.
+	* debug.h, w32-io.h, w32-io.c: New files.
+	* w32-pth.c: Include "debug.h" and "w32-io.h".
+	(debug_level, dbgfp): Make non-static.
+	(DBG_ERROR, DBG_INFO, DBG_CALLS): Moved to debug.h.
+	(fd_is_socket): New function.
+	(pth_init): Call _pth_sema_subsystem_init.
+	(do_pth_read): New function, supports pipes.
+	(pth_read_ev): Implement it.
+	(pth_read): Use do_pth_read.
+	(do_pth_write): New function, supports pipes.
+	(pth_write_ev): Implement it.
+	(pth_write): Use do_pth_write.
+	(do_pth_wait): Support pipes.  Use actual events waited upon when
+	gathering the results.  Use R instead of EV in build_fdarray
+	invocation.  Do not reset the event for pipes.  Add lengthy note
+	about remaining issues.
+	(do_pth_event_body): Fix type in va_arg invocation.
+
 2007-08-16  Werner Koch  <wk@g10code.com>
 
 	Released 2.0.1.

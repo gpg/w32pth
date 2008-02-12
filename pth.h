@@ -1,6 +1,6 @@
 /* pth.h - GNU Pth emulation for W32 (MS Windows).
  * Copyright (c) 1999-2003 Ralf S. Engelschall <rse@engelschall.com>
- * Copyright (C) 2004, 2006, 2007 g10 Code GmbH
+ * Copyright (C) 2004, 2006, 2007, 2008 g10 Code GmbH
  *
  * This file is part of W32PTH.
  *
@@ -43,6 +43,11 @@
 #ifndef W32_PTH_HANDLE_INTERNAL
 #define W32_PTH_HANDLE_INTERNAL  int
 #endif
+
+/* These are needed for pipe support.  Sigh.  */
+int pth_pipe (int filedes[2], int inherit_idx);
+int pth_close (int fd);
+
 
 /* We need to define value for the how argument of pth_sigmask.  This
    is required because Mingw does not yet define sigprocmask.  We use
@@ -98,7 +103,6 @@ enum
 #define PTH_EVENT_COND         (1<<7)
 #define PTH_EVENT_TID          (1<<8)
 #define PTH_EVENT_FUNC         (1<<9)
-
 
 
 /* Event occurrence restrictions. */

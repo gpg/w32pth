@@ -1,5 +1,5 @@
 # Makefile.am -  Makefile for W32PTH
-#     	Copyright (C) 2007 g10 Code GmbH
+# Copyright (C) 2007, 2008 g10 Code GmbH
 # 
 # This file is part of W32PTH.
 # 
@@ -54,7 +54,7 @@ libw32pth_la_LDFLAGS = $(w32pth_res_ldflag) $(no_undefined) $(export_symbols) \
       @W32PTH_LT_CURRENT@:@W32PTH_LT_REVISION@:@W32PTH_LT_AGE@
 libw32pth_la_DEPENDENCIES = $(w32pth_deps)
 libw32pth_la_LIBADD = @LTLIBOBJS@ -lws2_32
-libw32pth_la_SOURCES = w32-pth.c pth.h
+libw32pth_la_SOURCES = pth.h debug.h w32-pth.c w32-io.h w32-io.c
 
 
 install-data-local: install-def-file

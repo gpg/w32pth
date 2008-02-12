@@ -1,6 +1,6 @@
 /* w32-pth.c - GNU Pth emulation for W32 (MS Windows).
  * Copyright (c) 1999-2003 Ralf S. Engelschall <rse@engelschall.com>
- * Copyright (C) 2004, 2006, 2007 g10 Code GmbH
+ * Copyright (C) 2004, 2006, 2007, 2008 g10 Code GmbH
  *
  * This file is part of W32PTH.
  *
@@ -35,11 +35,13 @@
 #include <signal.h>
 #include <errno.h>
 
+#include "debug.h"
+#include "w32-io.h"
+
 /* We don't want to have any Windows specific code in the header, thus
    we use a macro which defaults to a compatible type in w32-pth.h. */
 #define W32_PTH_HANDLE_INTERNAL  HANDLE
 #include "pth.h"
-
 
 #ifndef FALSE
 #define FALSE 0
@@ -59,12 +61,8 @@
 /* States whether this module has been initialized.  */
 static int pth_initialized;
 
-/* Keeps the current debug level. Define marcos to test them. */
-static int debug_level;
-static FILE *dbgfp;
-#define DBG_ERROR  (debug_level >= 1)
-#define DBG_INFO   (debug_level >= 2)
-#define DBG_CALLS  (debug_level >= 3)
+int debug_level;
+FILE *dbgfp;
 
 /* Variables to support event handling. */
 static int pth_signo;
@@ -171,6 +169,25 @@ wsa_strerror (char *strerr, size_t strerrsize)
                    MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
                    strerr, strerrsize, NULL);
   return strerr;
+}
+
+
+static int
+fd_is_socket (int fd)
+{
+  int is_socket;
+  int optval;
+  int optlen;
+
+  optlen = sizeof (optval);
+  is_socket = (getsockopt (fd, SOL_SOCKET, SO_TYPE,
+			   (char *) &optval, &optlen) != SOCKET_ERROR);
+
+  if (DBG_INFO)
+  fprintf (dbgfp, "%s: fd_is_socket: fd %i is a %s.\n",
+	     log_get_prefix (NULL), fd, is_socket ? "socket" : "file");
+
+  return is_socket;
 }
 
 
@@ -297,6 +314,8 @@ pth_init (void)
   if (pth_initialized)
     return TRUE;
 
+  _pth_sema_subsystem_init ();
+
   s = getenv ("PTH_DEBUG");
   if (s)
     {
@@ -416,11 +435,81 @@ pth_timeout (long sec, long usec)
 }
 
 
-int
-pth_read_ev (int fd, void *buffer, size_t size, pth_event_t ev)
+static int
+do_pth_read (int fd,  void * buffer, size_t size)
 {
+  int n;
+
+  n = recv (fd, buffer, size, 0);
+  if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
+    {
+      HANDLE hd = _pth_get_reader_ev (fd);
+      if (hd != INVALID_HANDLE_VALUE)
+	n = _pth_io_read (fd, buffer, size);
+      else
+	{
+	  DWORD nread = 0;
+	  n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
+	  if (!n)
+	    {
+	      char strerr[256];
+	      
+	      if (DBG_ERROR)
+		fprintf (dbgfp, "%s: pth_read(%d) failed read from file: %s\n",
+			 log_get_prefix (NULL), fd,
+			 w32_strerror (strerr, sizeof strerr));
+	      n = -1;
+	    }
+	  else
+	    n = (int) nread;
+	}
+    }
+
+  return n;
+}
+
+
+int
+pth_read_ev (int fd, void *buffer, size_t size, pth_event_t ev_extra)
+{
+  static pth_key_t ev_key = PTH_KEY_INIT;
+  pth_event_t ev;
+  int n = 0;
+
   implicit_init ();
-  return 0;
+  enter_pth (__FUNCTION__);
+
+  /* FIXME: Consider fdmode, and other stuff (see GNU pth).  */
+
+  ev = do_pth_event (PTH_EVENT_FD | PTH_UNTIL_FD_READABLE | PTH_MODE_STATIC,
+		     &ev_key, fd);
+  if (! ev)
+    {
+      leave_pth (__FUNCTION__);
+      return -1;
+    }
+
+  if (ev_extra)
+    pth_event_concat (ev, ev_extra, NULL);
+
+  do_pth_wait (ev);
+
+  if (ev_extra)
+    {
+      pth_event_isolate (ev);
+
+      if (ev->status != PTH_STATUS_OCCURRED)
+	{
+	  errno = EINTR;
+	  leave_pth (__FUNCTION__);
+	  return -1;
+	}
+    }
+
+  n = do_pth_read (fd, buffer, size);
+
+  leave_pth (__FUNCTION__);
+  return n;
 }
 
 
@@ -432,75 +521,102 @@ pth_read (int fd,  void * buffer, size_t size)
   implicit_init ();
   enter_pth (__FUNCTION__);
 
-  n = recv (fd, buffer, size, 0);
+  n = do_pth_read (fd, buffer, size);
+
+  leave_pth (__FUNCTION__);
+  return n;
+}
+
+
+static int
+do_pth_write (int fd, const void *buffer, size_t size)
+{
+  int n;
+
+  n = send (fd, buffer, size, 0);
   if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
     {
-      DWORD nread = 0;
-      n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
-      if (!n)
-        {
-          char strerr[256];
-
-          if (DBG_ERROR)
-            fprintf (dbgfp, "%s: pth_read(%d) failed read from file: %s\n",
-                     log_get_prefix (NULL), fd,
-                     w32_strerror (strerr, sizeof strerr));
-          n = -1;
-        }
+      HANDLE hd = _pth_get_writer_ev (fd);
+      if (hd != INVALID_HANDLE_VALUE)
+	n = _pth_io_write (fd, buffer, size);
       else
-        n = (int)nread;
+	{
+	  DWORD nwrite;
+	  char strerr[256];
+	  
+	  /* This is no real error because we first need to figure out
+	     if we have a handle or a socket.  */
+
+	  n = WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL);
+	  if (n == -1)
+	    {
+	      if (DBG_ERROR)
+		fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
+			 log_get_prefix (NULL), fd,
+			 w32_strerror (strerr, sizeof strerr));
+	      n = -1;
+	    }
+	  else
+	    n = (int) nwrite;
+	}
     }
+
+  return n;
+}
+
+int
+pth_write_ev (int fd, const void *buffer, size_t size, pth_event_t ev_extra)
+{
+  static pth_key_t ev_key = PTH_KEY_INIT;
+  pth_event_t ev;
+  int n = 0;
+
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+
+  /* FIXME: Consider fdmode, and other stuff (see GNU pth).  */
+
+  ev = do_pth_event (PTH_EVENT_FD | PTH_UNTIL_FD_WRITEABLE | PTH_MODE_STATIC,
+		     &ev_key, fd);
+  if (! ev)
+    {
+      leave_pth (__FUNCTION__);
+      return -1;
+    }
+
+  if (ev_extra)
+    pth_event_concat (ev, ev_extra, NULL);
+
+  do_pth_wait (ev);
+  if (ev_extra)
+    {
+      pth_event_isolate (ev);
+
+      if (pth_event_status(ev) != PTH_STATUS_OCCURRED)
+	{
+	  errno = EINTR;
+	  leave_pth (__FUNCTION__);
+	  return -1;
+	}
+    }
+
+  n = do_pth_write (fd, buffer, size);
+
   leave_pth (__FUNCTION__);
   return n;
 }
 
 
 int
-pth_write_ev (int fd, const void *buffer, size_t size, pth_event_t ev)
-{
-  implicit_init ();
-  return 0;
-}
-
-
-int
-pth_write (int fd, const void * buffer, size_t size)
+pth_write (int fd, const void *buffer, size_t size)
 {
   int n;
 
   implicit_init ();
   enter_pth (__FUNCTION__);
-  n = send (fd, buffer, size, 0);
-  if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
-    {
-      DWORD nwrite;
-      char strerr[256];
 
-      /* This is no real error because we first need to figure out if
-         we have a handle or a socket.  */
+  n = do_pth_write (fd, buffer, size);
 
-      n = WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL);
-      if (!n)
-        {
-          if (DBG_ERROR)
-            fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
-                     log_get_prefix (NULL), fd,
-                     w32_strerror (strerr, sizeof strerr));
-          n = -1;
-        }
-      else
-        n = (int)nwrite;
-    }
-  else if (n == -1)
-    {
-      char strerr[256];
-
-      if (DBG_ERROR)
-        fprintf (dbgfp, "%s: pth_write(%d) failed in send: %s\n",
-                 log_get_prefix (NULL), fd,
-                 w32_strerror (strerr, sizeof strerr));
-      n = -1;
-    }
   leave_pth (__FUNCTION__);
   return n;
 }
@@ -526,7 +642,6 @@ show_event_ring (const char *text, pth_event_t ev)
   while (r=r->next, r != ev);
 }
   
-
 
 int
 pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
@@ -1050,6 +1165,7 @@ pth_exit (void *value)
 }
 
 
+
 static unsigned int
 do_pth_waitpid (unsigned pid, int * status, int options)
 {
@@ -1180,7 +1296,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
   if ( (spec & PTH_MODE_STATIC) )
     {
       ev->flags |= PTH_MODE_STATIC;
-      va_arg (arg, pth_key_t);
+      va_arg (arg, pth_key_t *);
     }
 
   ev->status = PTH_STATUS_PENDING;
@@ -1352,9 +1468,6 @@ wait_for_fd (int fd, int is_read, int nwait)
     }
   return 0;
 }
-
-
-
 
 
 static void *
@@ -1540,6 +1653,10 @@ spawn_helper_thread (void *(*func)(void *), void *arg)
   sa.lpSecurityDescriptor = NULL;
   sa.nLength = sizeof sa;
 
+  /* FIXME: We should poll the socket non-blockingly first, as
+     otherwise we might be starved by a concurrent timer event.  Also,
+     this helps us to update the event status (set/reset it here)
+     properly.  See note in do_pth_wait below.  */
   if (DBG_INFO)
     fprintf (dbgfp, "%s: spawn_helper_thread creating thread ...\n",
              log_get_prefix (NULL));
@@ -1618,11 +1735,56 @@ do_pth_wait (pth_event_t ev)
           break;
           
         case PTH_EVENT_FD:
-          if (DBG_INFO)
-            fprintf (dbgfp, "pth_wait: spawn wait_fd_thread\n");
-          evarray[pos] = r;  
-          waitbuf[pos++] = r->hd;
-          threadlist[thlstidx++] = spawn_helper_thread (wait_fd_thread, r);
+	  {
+	    int fd = r->u.fd;
+	    int is_socket = fd_is_socket (fd);
+
+	    if (is_socket)
+	      {
+		if (DBG_INFO)
+		  fprintf (dbgfp, "pth_wait: spawn wait_fd_thread\n");
+
+		evarray[pos] = r;  
+		waitbuf[pos++] = r->hd;
+		threadlist[thlstidx++] = spawn_helper_thread (wait_fd_thread, r);
+	      }
+	    else
+	      {
+
+		if (r->flags & PTH_UNTIL_FD_READABLE)
+		  {
+		    HANDLE reader_ev = _pth_get_reader_ev (fd);
+
+		    if (reader_ev == INVALID_HANDLE_VALUE)
+		      {
+			if (DBG_ERROR)
+			  fprintf (dbgfp, "%s: no reader for FD 0x%x "
+				   "(ignored)\n", log_get_prefix (NULL), fd);
+		      }
+		    else
+		      {
+			evarray[pos] = r;  
+			waitbuf[pos++] = reader_ev;
+		      }
+		  }
+		else
+		  {
+		    HANDLE writer_ev = _pth_get_writer_ev (fd);
+		    
+		    if (writer_ev == INVALID_HANDLE_VALUE)
+		      {
+			if (DBG_ERROR)
+			  fprintf (dbgfp, "%s: no writer for FD 0x%x "
+				   "(ignored)\n", log_get_prefix (NULL), fd);
+		      }
+		    else
+		      {
+			evarray[pos] = r;  
+			waitbuf[pos++] = writer_ev;
+		      }
+		  }
+	      }
+	  }
           break;
           
         case PTH_EVENT_TIME:
@@ -1688,7 +1850,7 @@ do_pth_wait (pth_event_t ev)
          with an assigned handle and update the status.  We start at N
          which indicates the lowest signaled event.  */
       for (count = 0, idx = 0; idx < pos; idx++)
-        if (WaitForSingleObject (evarray[idx]->hd, 0) == WAIT_OBJECT_0)
+        if (WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
           {
             r = evarray[idx];
 
@@ -1712,11 +1874,11 @@ do_pth_wait (pth_event_t ev)
                   
                   nfdarray = 0;
                   nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            ev->u.sel.rfds, 0 );
+                                            r->u.sel.rfds, 0 );
                   nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            ev->u.sel.wfds, 0 );
+                                            r->u.sel.wfds, 0 );
                   nfdarray = build_fdarray (fdarray, nfdarray, 
-                                            ev->u.sel.efds, 0 );
+                                            r->u.sel.efds, 0 );
 
                   if (r->u.sel.rfds)
                     FD_ZERO (r->u.sel.rfds);
@@ -1790,9 +1952,24 @@ do_pth_wait (pth_event_t ev)
             
             /* We don't reset Timer events and I don't know whether
                resetEvent will work at all.  SetWaitableTimer resets
-               the timer. */
-            if (r->u_type != PTH_EVENT_TIME)
-              reset_event (evarray[idx]->hd);
+               the timer.  FIXME.  Note by MB: Resetting the event
+               here seems wrong in most (all?) cases, as the event is
+               still "hot" for all we know: A second pth_wait with the
+               same events should return with the same results as the
+               previous one immediatetly.  For example, data on a
+               socket or pipe is still readable after.  Reset should
+               happen in pth_read/pth_write in this case, but these
+               functions need to do a quick poll as well.  Consider
+               for example a pth_read_ev where multiple events occur.
+               See w32-io.c how this works for pipes.  FIXME: Frankly,
+               this is a mess.  For example, make sure the below is
+               fine with the global signal event.  */
+/* We use HD for sockets, but something else for pipes.  */
+#define IS_PIPE(i) (evarray[i]->u_type == PTH_EVENT_FD \
+		    && evarray[i]->hd != waitbuf[i])
+
+            if (r->u_type != PTH_EVENT_TIME && ! IS_PIPE (idx))
+              reset_event (waitbuf[idx]);
           }
       if (DBG_INFO)
         fprintf (dbgfp, "%s: pth_wait: %d events have been signalled\n",

@@ -67,3 +67,5 @@ EXPORTS
 
       pth_yield @38
 
+      pth_pipe @39
+      pth_close @40
