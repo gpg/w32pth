@@ -175,6 +175,77 @@ wsa_strerror (char *strerr, size_t strerrsize)
 }
 
 
+int
+map_wsa_to_errno (long wsa_err)
+{
+  switch (wsa_err)
+    {
+    case 0:
+      return 0;
+
+    case WSAEINTR:
+      return EINTR;
+
+    case WSAEBADF:
+      return EBADF;
+
+    case WSAEACCES:
+      return EACCES;
+
+    case WSAEFAULT:
+      return EFAULT;
+
+    case WSAEINVAL:
+      return EINVAL;
+
+    case WSAEMFILE:
+      return EMFILE;
+
+    case WSAEWOULDBLOCK:
+      return EAGAIN;
+
+    case WSAENAMETOOLONG:
+      return ENAMETOOLONG;
+
+    case WSAENOTEMPTY:
+      return ENOTEMPTY;
+
+    default:
+      return EIO;
+    }
+}
+
+
+int
+map_w32_to_errno (DWORD w32_err)
+{
+  switch (w32_err)
+    {
+    case 0:
+      return 0;
+
+    case ERROR_FILE_NOT_FOUND:
+      return ENOENT;
+
+    case ERROR_PATH_NOT_FOUND:
+      return ENOENT;
+
+    case ERROR_ACCESS_DENIED:
+      return EPERM;
+
+    case ERROR_INVALID_HANDLE:
+    case ERROR_INVALID_BLOCK:
+      return EINVAL;
+
+    case ERROR_NOT_ENOUGH_MEMORY:
+      return ENOMEM;
+
+    default:
+      return EIO;
+    }
+}
+
+
 static int
 fd_is_socket (int fd)
 {
@@ -462,11 +533,14 @@ do_pth_read (int fd,  void * buffer, size_t size)
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
 	      n = -1;
+	      errno = map_w32_to_errno (GetLastError ());
 	    }
 	  else
 	    n = (int) nread;
 	}
     }
+  else if (n == -1)
+    errno = map_wsa_to_errno (WSAGetLastError ());
 
   return n;
 }
@@ -563,11 +637,14 @@ do_pth_write (int fd, const void *buffer, size_t size)
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
 	      n = -1;
+	      errno = map_w32_to_errno (GetLastError ());
 	    }
 	  else
 	    n = (int) nwrite;
 	}
     }
+  else if (n == -1)
+    errno = map_wsa_to_errno (WSAGetLastError ());
 
   return n;
 }

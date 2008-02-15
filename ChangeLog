@@ -1,3 +1,8 @@
+2008-02-15  Marcus Brinkmann  <marcus@g10code.de>
+
+	* w32-pth.c (map_wsa_to_errno, map_w32_to_errno): New functions.
+	(do_pth_read, do_pth_write): Use these to set errno.
+
 2008-02-12  Marcus Brinkmann  <marcus@g10code.de>
 
 	* Makefile.in: Removed.
