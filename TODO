@@ -10,7 +10,7 @@
 * Speaking of signals, that needs to be properly implemented and 
   tested.
 
-* Dirmngr still leaks some events under load.  Find out if this is a
-  bug in dirmngr or in w32pth or a combination of both.
-
+* We can support static initializers for mutexes, because we can check
+  the initialization flag (or some other marker, like invalid handle)
+  before we call enter_pth.
 

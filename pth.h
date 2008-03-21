@@ -240,6 +240,8 @@ int pth_connect (int fd, struct sockaddr *name, int namelen);
 int pth_mutex_release (pth_mutex_t *hd);
 int pth_mutex_acquire(pth_mutex_t *hd, int try_only, pth_event_t ev_extra);
 int pth_mutex_init (pth_mutex_t *hd);
+/* We need this under windows, otherwise we would leak handles.  */
+int pth_mutex_destroy (pth_mutex_t *hd);
 
 int pth_rwlock_init (pth_rwlock_t *rwlock);
 int pth_rwlock_acquire (pth_rwlock_t *rwlock, int op, int try, pth_event_t ev);

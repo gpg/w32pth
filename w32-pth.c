@@ -1037,6 +1037,20 @@ pth_mutex_init (pth_mutex_t *mutex)
 }
 
 
+/* Destroy the mutex MUTEX.  */
+int
+pth_mutex_destroy (pth_mutex_t *mutex)
+{
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+
+  CloseHandle (*mutex);
+
+  leave_pth (__FUNCTION__);
+  return TRUE;
+}
+
+
 int
 pth_rwlock_init (pth_rwlock_t *rwlock)
 {
