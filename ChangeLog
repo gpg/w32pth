@@ -1,5 +1,9 @@
 2008-03-21  Marcus Brinkmann  <marcus@g10code.de>
 
+	* pth.h (pth_usleep): New prototype.
+	* w32-pth.c (pth_usleep): New function.
+	* libw32pth.def: Add pth_usleep.
+
 	* pth.h (pth_mutex_destroy): New prototype.
 	* w32-pth.c (pth_mutex_destroy): New function.
 	* libw32pth.def: Add pth_mutex_destroy.

@@ -70,3 +70,5 @@ EXPORTS
       pth_pipe @39
       pth_close @40
       pth_mutex_destroy @41
+
+      pth_usleep @42

@@ -2088,6 +2088,38 @@ pth_sleep (int sec)
 
 
 int
+pth_usleep (unsigned int usec)
+{
+  static pth_key_t ev_key = PTH_KEY_INIT;
+  pth_event_t ev;
+
+  implicit_init ();
+  enter_pth (__FUNCTION__);
+
+  if (usec == 0)
+    {
+      leave_pth (__FUNCTION__);
+      return 0;
+    }
+
+  ev = do_pth_event (PTH_EVENT_TIME | PTH_MODE_STATIC, &ev_key,
+                     pth_timeout (0, usec));
+  if (ev == NULL)
+    {
+      leave_pth (__FUNCTION__);
+      return -1;
+    }
+  do_pth_wait (ev);
+#ifdef NO_PTH_MODE_STATIC
+  do_pth_event_free (ev, PTH_FREE_THIS);
+#endif
+
+  leave_pth (__FUNCTION__);
+  return 0;
+}
+
+
+int
 pth_sigmask (int how, const sigset_t *set, sigset_t *old)
 {
 

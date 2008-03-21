@@ -262,6 +262,7 @@ unsigned int pth_waitpid (unsigned int, int *status, int options);
 int pth_wait (pth_event_t hd);
 
 int pth_sleep (int n);
+int pth_usleep (unsigned int usec);
 pth_time_t pth_timeout (long sec, long usec);
 
 
