@@ -1,7 +1,13 @@
 Noteworthy changes in version 2.0.2
 ------------------------------------------------
 
- * Support pipes created with pth_pipe and closed with pth_close.
+ * Support pipes created with non-standard extensions pth_pipe and
+   closed with pth_close.
+
+ * Allow destruction of mutexes with non-standard extension
+   pth_mutex_destroy.
+
+ * Support pth_usleep.
 
  * Bug fixes.
 
