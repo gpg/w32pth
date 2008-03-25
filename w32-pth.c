@@ -253,12 +253,21 @@ fd_is_socket (int fd)
   int optval;
   int optlen;
 
-  optlen = sizeof (optval);
-  is_socket = (getsockopt (fd, SOL_SOCKET, SO_TYPE,
-			   (char *) &optval, &optlen) != SOCKET_ERROR);
+  if (_pth_get_reader_ev (fd) != INVALID_HANDLE_VALUE
+      || _pth_get_writer_ev (fd) != INVALID_HANDLE_VALUE)
+    is_socket = 0;
+  else
+    {
+      /* This implemenation strategy is taken from glib.
+	 Unfortunately, it does not work with pipes, as getsockopt can
+	 block on those.  So we test for pipes above first.  */
+      optlen = sizeof (optval);
+      is_socket = (getsockopt (fd, SOL_SOCKET, SO_TYPE,
+			       (char *) &optval, &optlen) != SOCKET_ERROR);
+    }
 
   if (DBG_INFO)
-  fprintf (dbgfp, "%s: fd_is_socket: fd %i is a %s.\n",
+    fprintf (dbgfp, "%s: fd_is_socket: fd %i is a %s.\n",
 	     log_get_prefix (NULL), fd, is_socket ? "socket" : "file");
 
   return is_socket;
@@ -513,14 +522,17 @@ static int
 do_pth_read (int fd,  void * buffer, size_t size)
 {
   int n;
+  HANDLE hd;
 
-  n = recv (fd, buffer, size, 0);
-  if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
+  /* We have to check for internal pipes first, as socket operations
+     can block on these.  */
+  hd = _pth_get_reader_ev (fd);
+  if (hd != INVALID_HANDLE_VALUE)
+    n = _pth_io_read (fd, buffer, size);
+  else
     {
-      HANDLE hd = _pth_get_reader_ev (fd);
-      if (hd != INVALID_HANDLE_VALUE)
-	n = _pth_io_read (fd, buffer, size);
-      else
+      n = recv (fd, buffer, size, 0);
+      if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
 	{
 	  DWORD nread = 0;
 	  n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
@@ -538,9 +550,9 @@ do_pth_read (int fd,  void * buffer, size_t size)
 	  else
 	    n = (int) nread;
 	}
+      else if (n == -1)
+	errno = map_wsa_to_errno (WSAGetLastError ());
     }
-  else if (n == -1)
-    errno = map_wsa_to_errno (WSAGetLastError ());
 
   return n;
 }
@@ -614,14 +626,17 @@ static int
 do_pth_write (int fd, const void *buffer, size_t size)
 {
   int n;
+  HANDLE hd;
 
-  n = send (fd, buffer, size, 0);
-  if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
+  /* We have to check for internal pipes first, as socket operations
+     can block on these.  */
+  hd = _pth_get_writer_ev (fd);
+  if (hd != INVALID_HANDLE_VALUE)
+    n = _pth_io_write (fd, buffer, size);
+  else
     {
-      HANDLE hd = _pth_get_writer_ev (fd);
-      if (hd != INVALID_HANDLE_VALUE)
-	n = _pth_io_write (fd, buffer, size);
-      else
+      n = send (fd, buffer, size, 0);
+      if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
 	{
 	  DWORD nwrite;
 	  char strerr[256];
@@ -642,12 +657,13 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	  else
 	    n = (int) nwrite;
 	}
+      else if (n == -1)
+	errno = map_wsa_to_errno (WSAGetLastError ());
     }
-  else if (n == -1)
-    errno = map_wsa_to_errno (WSAGetLastError ());
 
   return n;
 }
+
 
 int
 pth_write_ev (int fd, const void *buffer, size_t size, pth_event_t ev_extra)
@@ -1383,13 +1399,13 @@ do_pth_event_body (unsigned long spec, va_list arg)
   if ((spec & (PTH_MODE_CHAIN|PTH_MODE_REUSE)))
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: pth_event spec=%lu - not supported\n", 
+        fprintf (dbgfp, "%s: pth_event spec=%lx - not supported\n", 
                  log_get_prefix (NULL), spec);
       return NULL; /* Not supported.  */
     }
 
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: pth_event spec=%lu\n", log_get_prefix (NULL), spec);
+    fprintf (dbgfp, "%s: pth_event spec=%lx\n", log_get_prefix (NULL), spec);
 
   ev = calloc (1, sizeof *ev);
   if (!ev)
@@ -1436,7 +1452,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
       ev->u_type = PTH_EVENT_FD;
       ev->u.fd = va_arg (arg, int);
       if (DBG_INFO)
-        fprintf (dbgfp, "%s: pth_event: fd=%d\n",
+        fprintf (dbgfp, "%s: pth_event: fd=0x%x\n",
                  log_get_prefix (NULL), ev->u.fd);
     }
   else if (spec & PTH_EVENT_TIME)
@@ -1730,15 +1746,16 @@ do_pth_wait (pth_event_t ev)
   pth_event_t r;
   int count;
 
+  TRACE_BEG (DEBUG_INFO, "do_pth_wait", ev);
+
   if (!ev)
-    return 0;
+    return TRACE_SYSRES (0);
 
   n = event_count (ev);
   if (n > MAXIMUM_WAIT_OBJECTS/2)
-    return -1;
+    return TRACE_SYSRES (-1);
 
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: pth_wait: cnt %lu\n", log_get_prefix (NULL), n);
+  TRACE_LOG1 ("cnt %lu", n);
 
   /* Set all events to pending.  */
   r = ev;
@@ -1747,7 +1764,7 @@ do_pth_wait (pth_event_t ev)
       r->status = PTH_STATUS_PENDING;
       r = r->next;
     }
-  while ( r != ev);
+  while (r != ev);
 
   /* Prepare all events which requires to launch helper threads for
      some types.  This creates an array of handles which are lates
@@ -1759,8 +1776,7 @@ do_pth_wait (pth_event_t ev)
       switch (r->u_type)
         {
         case PTH_EVENT_SIGS:
-          if (DBG_INFO)
-            fprintf (dbgfp, "pth_wait: add signal event\n");
+          TRACE_LOG ("add signal event");
           /* Register the global signal event.  */
           evarray[pos] = r;  
           waitbuf[pos++] = pth_signo_ev;
@@ -1770,6 +1786,8 @@ do_pth_wait (pth_event_t ev)
 	  {
 	    int res;
 	    int fd = r->u.fd;
+	    /* FIXME: Could be optimised a bit, as we call
+	       _pth_get_reader_ev twice in the reader case.  */
 	    int is_socket = fd_is_socket (fd);
 
 	    if (is_socket)
@@ -1794,6 +1812,7 @@ do_pth_wait (pth_event_t ev)
 		  }
 		else
 		  {
+		    TRACE_LOG2 ("socket event for FD 0x%x is %p", fd, sockevent);
 		    evarray[pos] = r;
 		    waitbuf[pos++] = sockevent;
 		  }
@@ -1813,7 +1832,8 @@ do_pth_wait (pth_event_t ev)
 		      }
 		    else
 		      {
-			evarray[pos] = r;  
+			TRACE_LOG2 ("reader for FD 0x%x is %p", fd, reader_ev);
+			evarray[pos] = r;
 			waitbuf[pos++] = reader_ev;
 		      }
 		  }
@@ -1829,6 +1849,7 @@ do_pth_wait (pth_event_t ev)
 		      }
 		    else
 		      {
+			TRACE_LOG2 ("writer for FD 0x%x is %p", fd, writer_ev);
 			evarray[pos] = r;  
 			waitbuf[pos++] = writer_ev;
 		      }
@@ -1838,8 +1859,7 @@ do_pth_wait (pth_event_t ev)
           break;
           
         case PTH_EVENT_TIME:
-          if (DBG_INFO)
-            fprintf (dbgfp, "pth_wait: adding timer event\n");
+          TRACE_LOG ("adding timer event");
           {
             LARGE_INTEGER ll;
 
@@ -1851,7 +1871,7 @@ do_pth_wait (pth_event_t ev)
                   fprintf (dbgfp,"%s: %s: SetWaitableTimer failed: %s\n",
                            log_get_prefix (NULL), __func__,
                            w32_strerror (strerr, sizeof strerr));
-                return -1;
+                return TRACE_SYSRES (-1);
               }
             evarray[pos] = r;  
             waitbuf[pos++] = r->hd;
@@ -1859,8 +1879,7 @@ do_pth_wait (pth_event_t ev)
           break;
 
         case PTH_EVENT_SELECT:
-          if (DBG_INFO)
-            fprintf (dbgfp, "pth_wait: adding select event\n");
+          TRACE_LOG ("adding select event");
           evarray[pos] = r;  
           waitbuf[pos++] = r->hd;
           break;
@@ -1869,23 +1888,27 @@ do_pth_wait (pth_event_t ev)
           if (DBG_ERROR)
             fprintf (dbgfp, "pth_wait: ignoring mutex event.\n");
           break;
+
+	default:
+          if (DBG_ERROR)
+            fprintf (dbgfp, "pth_wait: unhandled event type 0x%x.\n",
+		     r->u_type);
+	  break;
         }
       r = r->next;
     }
-  while ( r != ev );
+  while (r != ev);
 
-  if (DBG_INFO)
+  TRACE_LOG ("dump list");
+  if (_pth_debug_trace ())
     {
-      fprintf (dbgfp, "%s: pth_wait: WFMO n=%d\n", 
-               log_get_prefix (NULL), pos);
-      for (i=0; i < pos; i++)
-        fprintf (dbgfp, "%s: pth_wait:      %d=%p\n", 
-                 log_get_prefix (NULL), i, waitbuf[i]);
+      TRACE_LOG1 ("WFMO n=%d", pos);
+      for (i = 0; i < pos; i++)
+        TRACE_LOG2 ("      %d=%p", i, waitbuf[i]);
     }
+  TRACE_LOG ("now wait");
   n = WaitForMultipleObjects (pos, waitbuf, FALSE, INFINITE);
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: pth_wait: WFMO returned %ld\n",
-             log_get_prefix (NULL), n);
+  TRACE_LOG1 ("WFMO returned %ld", n);
   count = 0;
 
   /* Walk over all events with an assigned handle and update the
@@ -1896,9 +1919,7 @@ do_pth_wait (pth_event_t ev)
       
       if (WaitForSingleObject (waitbuf[idx], 0) == WAIT_OBJECT_0)
 	{
-	  if (DBG_INFO)
-	    fprintf (dbgfp, "%s: pth_wait: setting %d ev=%p\n",
-		     __func__, idx, r);
+	  TRACE_LOG2 ("setting %d ev=%p", idx, r);
 	  r->status = PTH_STATUS_OCCURRED;
 	  count++;
 
@@ -2029,16 +2050,12 @@ do_pth_wait (pth_event_t ev)
 	}
     }
 
-  if (DBG_INFO)
-    fprintf (dbgfp, "%s: pth_wait: %d events have been signalled\n",
-	     log_get_prefix (NULL), count);
-
   if (count)
-    return count;
+    return TRACE_SYSRES (count);
   else if (n == WAIT_TIMEOUT)
-    return 0;
+    return TRACE_SYSRES (0);
   else
-    return -1;
+    return TRACE_SYSRES (-1);
 }
 
 

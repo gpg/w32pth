@@ -920,7 +920,7 @@ pth_pipe (int filedes[2], int inherit_idx)
   HANDLE rh;
   HANDLE wh;
   SECURITY_ATTRIBUTES sec_attr;
-  TRACE_BEG2 (DEBUG_SYSIO, "_pth_io_pipe", filedes,
+  TRACE_BEG2 (DEBUG_SYSIO, "_pth_pipe", filedes,
 	      "inherit_idx=%i (used for %s)",
 	      inherit_idx, inherit_idx ? "reading" : "writing");
 

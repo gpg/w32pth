@@ -31,6 +31,10 @@ extern FILE *dbgfp;
 #define DBG_INFO   (debug_level >= 2)
 #define DBG_CALLS  (debug_level >= 3)
 
+#define DEBUG_ERROR	1
+#define DEBUG_INFO	2
+#define DEBUG_CALLS	3
+
 
 /* Indirect stringification, requires __STDC__ to work.  */
 #define STRINGIFY(v) #v
