@@ -1,3 +1,17 @@
+2008-05-27  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (_pth_malloc, _pth_calloc, _pth_free): New.  Always
+	use these wrappers to be prepared to change the allocators. 
+
+2008-05-26  Werner Koch  <wk@g10code.com>
+
+	* w32-io.c (_pth_debug): Print tick, process and thread id.
+	* w32-pth.c (enter_pth, leave_pth): Use debug function.
+
+	* w32-pth.c (pth_thread_id): New.
+
+	* libw32pth.def (pth_thread_id): New.
+	
 2008-03-25  Marcus Brinkmann  <marcus@g10code.de>
 
 	* debug.h (DEBUG_INFO, DEBUG_CALLS): New macros.
@@ -52,6 +66,13 @@
 	invocation.  Do not reset the event for pipes.  Add lengthy note
 	about remaining issues.
 	(do_pth_event_body): Fix type in va_arg invocation.
+
+2007-11-20  Werner Koch  <wk@g10code.com>
+
+	* pth.h (PTH_EVENT_HANDLE): New.
+	* w32-pth.c (struct pth_event_s): Add HANDLE.
+	(do_pth_event_body, do_pth_wait): Implement handle event.
+	(do_pth_event_free): Do not close HD for a handle event.
 
 2007-08-16  Werner Koch  <wk@g10code.com>
 

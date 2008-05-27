@@ -103,7 +103,7 @@ critsect_init (struct critsect_s *s)
         return;
     }
     /* now init it */
-    mp = malloc ( sizeof *mp );
+    mp = _pth_malloc ( sizeof *mp );
     if (!mp) {
         LeaveCriticalSection (&init_lock);
         sema_fatal ("out of core while creating critical section lock");
@@ -143,7 +143,7 @@ _pth_sema_cs_destroy ( struct critsect_s *s )
 {
     if (s && s->priv) {
         DeleteCriticalSection ((CRITICAL_SECTION*)s->priv);
-        free (s->priv);
+        _pth_free (s->priv);
         s->priv = NULL;
     }
 }
@@ -167,6 +167,10 @@ _pth_debug (int level, const char *format, ...)
     
   va_start (arg_ptr, format);
   LOCK (debug_lock);
+  fprintf (dbgfp, "%05lu/%lu.%lu/libw32pth: ", 
+           ((unsigned long)GetTickCount () % 100000),
+           (unsigned long)GetCurrentProcessId (),
+           (unsigned long)GetCurrentThreadId ());
   vfprintf (dbgfp, format, arg_ptr);
   va_end (arg_ptr);
   if(format && *format && format[strlen (format) - 1] != '\n')
@@ -380,7 +384,7 @@ create_reader (HANDLE fd)
   sec_attr.nLength = sizeof sec_attr;
   sec_attr.bInheritHandle = FALSE;
   
-  ctx = calloc (1, sizeof *ctx);
+  ctx = _pth_calloc (1, sizeof *ctx);
   if (!ctx)
     {
       TRACE_SYSERR (errno);
@@ -403,7 +407,7 @@ create_reader (HANDLE fd)
 	CloseHandle (ctx->have_space_ev);
       if (ctx->stopped)
 	CloseHandle (ctx->stopped);
-      free (ctx);
+      _pth_free (ctx);
       /* FIXME: Translate the error code.  */
       TRACE_SYSERR (EIO);
       return NULL;
@@ -423,7 +427,7 @@ create_reader (HANDLE fd)
 	CloseHandle (ctx->have_space_ev);
       if (ctx->stopped)
 	CloseHandle (ctx->stopped);
-      free (ctx);
+      _pth_free (ctx);
       TRACE_SYSERR (EIO);
       return NULL;
     }    
@@ -469,7 +473,7 @@ destroy_reader (struct reader_context_s *ctx)
     CloseHandle (ctx->have_space_ev);
   CloseHandle (ctx->thread_hd);
   DESTROY_LOCK (ctx->mutex);
-  free (ctx);
+  _pth_free (ctx);
 }
 
 
@@ -685,7 +689,7 @@ create_writer (HANDLE fd)
   sec_attr.nLength = sizeof sec_attr;
   sec_attr.bInheritHandle = FALSE;
 
-  ctx = calloc (1, sizeof *ctx);
+  ctx = _pth_calloc (1, sizeof *ctx);
   if (!ctx)
     {
       TRACE_SYSERR (errno);
@@ -708,7 +712,7 @@ create_writer (HANDLE fd)
 	CloseHandle (ctx->is_empty);
       if (ctx->stopped)
 	CloseHandle (ctx->stopped);
-      free (ctx);
+      _pth_free (ctx);
       /* FIXME: Translate the error code.  */
       TRACE_SYSERR (EIO);
       return NULL;
@@ -728,7 +732,7 @@ create_writer (HANDLE fd)
 	CloseHandle (ctx->is_empty);
       if (ctx->stopped)
 	CloseHandle (ctx->stopped);
-      free (ctx);
+      _pth_free (ctx);
       TRACE_SYSERR (EIO);
       return NULL;
     }    
@@ -773,7 +777,7 @@ destroy_writer (struct writer_context_s *ctx)
     CloseHandle (ctx->is_empty);
   CloseHandle (ctx->thread_hd);
   DESTROY_LOCK (ctx->mutex);
-  free (ctx);
+  _pth_free (ctx);
 }
 
 

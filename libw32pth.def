@@ -72,3 +72,4 @@ EXPORTS
       pth_mutex_destroy @41
 
       pth_usleep @42
+      pth_thread_id @43

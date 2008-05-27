@@ -21,6 +21,13 @@
 #ifndef W32_IO_H
 #define W32_IO_H
 
+/* Actually in w32-pth.c */
+void *pth_malloc (size_t n);
+void *pth_calloc (size_t n, size_t m);
+void _pth_free (void *p);
+
+
+/* w32-io.c */
 void _pth_sema_subsystem_init (void);
 
 /* For select.  */
@@ -29,5 +36,6 @@ HANDLE _pth_get_writer_ev (int fd);
 
 int _pth_io_read (int fd, void *buffer, size_t count);
 int _pth_io_write (int fd, const void *buffer, size_t count);
+
 
 #endif	/* W32_IO_H */

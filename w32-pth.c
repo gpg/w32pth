@@ -64,6 +64,7 @@
 /* States whether this module has been initialized.  */
 static int pth_initialized;
 
+/* Debug helpers.  */
 int debug_level;
 FILE *dbgfp;
 
@@ -153,6 +154,33 @@ log_get_prefix (const void *dummy)
 {
   return "libw32pth";
 }
+
+
+/* Our own malloc function.  Eventually we will use HeapCreate to use
+   a private heap here.  */
+void *
+_pth_malloc (size_t n)
+{
+  void *p;
+  p = malloc (n);
+  return p;
+}
+
+void *
+_pth_calloc (size_t n, size_t m)
+{
+  void *p;
+  p = calloc (n, m);
+  return p;
+}
+
+void
+_pth_free (void *p)
+{
+  if (p)
+    free (p);
+}
+
 
 static char *
 w32_strerror (char *strerr, size_t strerrsize)
@@ -409,7 +437,7 @@ pth_init (void)
           s1++;
           if (!(s2 = strchr (s1, ';')))
             s2 = s1 + strlen (s1);
-          p = malloc (s2 - s1 + 1);
+          p = _pth_malloc (s2 - s1 + 1);
           if (p)
             {
               memcpy (p, s1, s2-s1);
@@ -417,14 +445,14 @@ pth_init (void)
               dbgfp = fopen (p, "a");
               if (dbgfp)
                 setvbuf (dbgfp, NULL, _IOLBF, 0);
-              free (p);
+              _pth_free (p);
             }
         }
     }
   if (!dbgfp)
     dbgfp = stderr;
   if (debug_level)
-    fprintf (dbgfp, "%s: pth_init: called.\n", log_get_prefix (NULL));
+    _pth_debug (DEBUG_ERROR, "pth_init called\n");
 
   if (WSAStartup (0x202, &wsadat))
     return FALSE;
@@ -466,8 +494,7 @@ enter_pth (const char *function)
   /* Fixme: I am not sure whether the same thread my enter a critical
      section twice.  */
   if (DBG_CALLS)
-    fprintf (dbgfp, "%s: enter_pth (%s)\n",
-             log_get_prefix (NULL), function? function:"");
+    _pth_debug (DEBUG_CALLS, "enter_pth (%s)\n", function? function:"");
   LeaveCriticalSection (&pth_shd);
 }
 
@@ -477,8 +504,7 @@ leave_pth (const char *function)
 {
   EnterCriticalSection (&pth_shd);
   if (DBG_CALLS)
-    fprintf (dbgfp, "%s: leave_pth (%s)\n",
-             log_get_prefix (NULL), function? function:"");
+    _pth_debug (DEBUG_CALLS, "leave_pth (%s)\n", function? function:"");
 }
 
 
@@ -1096,7 +1122,7 @@ pth_attr_new (void)
   pth_attr_t hd;
 
   implicit_init ();
-  hd = calloc (1, sizeof *hd);
+  hd = _pth_calloc (1, sizeof *hd);
   return hd;
 }
 
@@ -1108,8 +1134,8 @@ pth_attr_destroy (pth_attr_t hd)
     return -1;
   implicit_init ();
   if (hd->name)
-    free (hd->name);
-  free (hd);
+    _pth_free (hd->name);
+  _pth_free (hd);
   return TRUE;
 }
 
@@ -1153,7 +1179,7 @@ pth_attr_set (pth_attr_t hd, int field, ...)
     case PTH_ATTR_NAME:
       str = va_arg (args, char*);
       if (hd->name)
-        free (hd->name);
+        _pth_free (hd->name);
       if (str)
         {
           hd->name = strdup (str);
@@ -1191,7 +1217,7 @@ do_pth_spawn (pth_attr_t hd, void *(*func)(void *), void *arg)
   sa.lpSecurityDescriptor = NULL;
   sa.nLength = sizeof sa;
 
-  ctx = calloc (1, sizeof *ctx);
+  ctx = _pth_calloc (1, sizeof *ctx);
   if (!ctx)
     return NULL;
   ctx->thread = func;
@@ -1217,7 +1243,7 @@ do_pth_spawn (pth_attr_t hd, void *(*func)(void *), void *arg)
     fprintf (dbgfp, "%s: do_pth_spawn created thread %p\n",
              log_get_prefix (NULL),th);
   if (!th)
-    free (ctx);
+    _pth_free (ctx);
   else
     ResumeThread (th);
   
@@ -1245,6 +1271,16 @@ pth_self (void)
 {
   return GetCurrentThread ();
 }
+
+
+/* Special W32 function to cope with the problem that pth_self returns
+   just a pseudo handle which is not very usefule for debugging.  */
+unsigned long 
+pth_thread_id (void)
+{
+  return GetCurrentThreadId ();
+}
+
 
 int
 pth_join (pth_t hd, void **value)
@@ -1407,7 +1443,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
   if (DBG_INFO)
     fprintf (dbgfp, "%s: pth_event spec=%lx\n", log_get_prefix (NULL), spec);
 
-  ev = calloc (1, sizeof *ev);
+  ev = _pth_calloc (1, sizeof *ev);
   if (!ev)
     return NULL;
   ev->next = ev;
@@ -1418,7 +1454,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
     ev->hd = create_event ();
   if (!ev->hd)
     {
-      free (ev);
+      _pth_free (ev);
       return NULL;
     }
 
@@ -1582,7 +1618,7 @@ launch_thread (void *arg)
          deallocated handle. Don't use it directly but setup proper
          scheduling queues.  */
       enter_pth (__FUNCTION__);
-      free (c);
+      _pth_free (c);
     }
   ExitThread (0);
   return NULL;
@@ -1662,7 +1698,7 @@ do_pth_event_free (pth_event_t ev, int mode)
           pth_event_t next = cur->next;
           CloseHandle (cur->hd);
           cur->hd = NULL;
-          free (cur);
+          _pth_free (cur);
           cur = next;
         }
       while (cur != ev);
@@ -1673,7 +1709,7 @@ do_pth_event_free (pth_event_t ev, int mode)
       ev->next->prev = ev->prev;
       CloseHandle (ev->hd);
       ev->hd = NULL;	    
-      free (ev);
+      _pth_free (ev);
     }
   else
     return FALSE;

@@ -11,6 +11,9 @@ Noteworthy changes in version 2.0.2
 
  * Bug fixes.
 
+ * New non-standard fucntion pth_thread_id.
+
+
 Noteworthy changes in version 2.0.1 (2007-08-16)
 ------------------------------------------------
 

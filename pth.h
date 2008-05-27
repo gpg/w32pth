@@ -280,6 +280,11 @@ int pth_sigmask (int how, const sigset_t *set, sigset_t *old);
 int pth_yield (pth_t tid);
 
 
+/* Special W32 function to cope with the problem that pth_self returns
+   just a pseudo handle which is not very usefule for debugging.  */
+unsigned long pth_thread_id (void);
+#define PTH_HAVE_PTH_THREAD_ID 1
+
 
 /*-- pth_util.c --*/
 
