@@ -103,7 +103,7 @@ enum
 #define PTH_EVENT_COND         (1<<7)
 #define PTH_EVENT_TID          (1<<8)
 #define PTH_EVENT_FUNC         (1<<9)
-
+#define PTH_EVENT_HANDLE       (1<<10)  /* A generic waitable W32 HANDLE. */
 
 /* Event occurrence restrictions. */
 #define PTH_UNTIL_OCCURRED     (1<<11)

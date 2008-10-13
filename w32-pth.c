@@ -88,7 +88,9 @@ struct pth_event_s
 {
   struct pth_event_s *next; 
   struct pth_event_s *prev;
-  HANDLE hd;                  /* The event object.  */
+  HANDLE hd;                  /* The event object.  Note that this is
+                                 also used directly for the
+                                 PTH_EVENT_HANDLE event.  */
   int u_type;                 /* The type of the event.  */
   union
   {
@@ -344,7 +346,7 @@ create_event (void)
   return h2;
 }
 
-
+#if 0 /* Not yet used.  */
 static void
 set_event (HANDLE h)
 {
@@ -363,6 +365,7 @@ set_event (HANDLE h)
                log_get_prefix (NULL), h);
     }
 }
+#endif
 
 static void
 reset_event (HANDLE h)
@@ -1379,6 +1382,7 @@ pth_waitpid (unsigned pid, int * status, int options)
 }
 
 
+#if 0 /* Not yet used.  */
 static BOOL WINAPI
 sig_handler (DWORD signo)
 {
@@ -1395,6 +1399,7 @@ sig_handler (DWORD signo)
     fprintf (dbgfp, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
   return TRUE;
 }
+#endif
 
 
 /* Helper to build an fdarray.  */
@@ -1448,14 +1453,17 @@ do_pth_event_body (unsigned long spec, va_list arg)
     return NULL;
   ev->next = ev;
   ev->prev = ev;
-  if ((spec & PTH_EVENT_TIME))
-    ev->hd = create_timer ();
-  else
-    ev->hd = create_event ();
-  if (!ev->hd)
+  if ( !(spec & PTH_EVENT_HANDLE) )
     {
-      _pth_free (ev);
-      return NULL;
+      if ((spec & PTH_EVENT_TIME))
+        ev->hd = create_timer ();
+      else
+        ev->hd = create_event ();
+      if (!ev->hd)
+        {
+          _pth_free (ev);
+          return NULL;
+        }
     }
 
   /* We don't support static yet but we need to consume the
@@ -1470,6 +1478,11 @@ do_pth_event_body (unsigned long spec, va_list arg)
 
   if (spec == 0)
     ;
+  else if (spec & PTH_EVENT_HANDLE)
+    {
+      ev->u_type = PTH_EVENT_HANDLE;
+      ev->hd = va_arg (arg, void *);
+    }
   else if (spec & PTH_EVENT_SIGS)
     {
       ev->u_type = PTH_EVENT_SIGS;
@@ -1696,7 +1709,8 @@ do_pth_event_free (pth_event_t ev, int mode)
       do
         {
           pth_event_t next = cur->next;
-          CloseHandle (cur->hd);
+          if (cur->u_type != PTH_EVENT_HANDLE)
+            CloseHandle (cur->hd);
           cur->hd = NULL;
           _pth_free (cur);
           cur = next;
@@ -1707,7 +1721,8 @@ do_pth_event_free (pth_event_t ev, int mode)
     {
       ev->prev->next = ev->next;
       ev->next->prev = ev->prev;
-      CloseHandle (ev->hd);
+      if (ev->u_type != PTH_EVENT_HANDLE)
+        CloseHandle (ev->hd);
       ev->hd = NULL;	    
       _pth_free (ev);
     }
@@ -1803,7 +1818,7 @@ do_pth_wait (pth_event_t ev)
   while (r != ev);
 
   /* Prepare all events which requires to launch helper threads for
-     some types.  This creates an array of handles which are lates
+     some types.  This creates an array of handles which are later
      passed to WFMO. */
   pos = thlstidx = 0;
   r = ev;
@@ -1916,6 +1931,12 @@ do_pth_wait (pth_event_t ev)
 
         case PTH_EVENT_SELECT:
           TRACE_LOG ("adding select event");
+          evarray[pos] = r;  
+          waitbuf[pos++] = r->hd;
+          break;
+
+        case PTH_EVENT_HANDLE:
+          TRACE_LOG ("adding handle event");
           evarray[pos] = r;  
           waitbuf[pos++] = r->hd;
           break;

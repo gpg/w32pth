@@ -13,6 +13,8 @@ Noteworthy changes in version 2.0.2
 
  * New non-standard fucntion pth_thread_id.
 
+ * Add PTH_HANDLE_EVENT.
+
 
 Noteworthy changes in version 2.0.1 (2007-08-16)
 ------------------------------------------------
@@ -27,7 +29,7 @@ Noteworthy changes in version 2.0.0 (2007-07-05)
    to indicate the version of Pth we are emulating.
 
 
- Copyright 2007 g10 Code GmbH
+ Copyright 2007, 2008 g10 Code GmbH
 
  This file is free software; as a special exception the author gives
  unlimited permission to copy and/or distribute it, with or without

@@ -1,3 +1,11 @@
+2008-10-13  Werner Koch  <wk@g10code.com>
+
+	* pth.h (PTH_EVENT_HANDLE): New.  Note that this was orginally
+	implemented on 2007-11-20 but accidently not commited and thus
+	later lost.
+	* w32-pth.c (do_pth_event_body, do_pth_wait): Implement this event.
+	(do_pth_event_free): Do not close HD for a handle event.
+
 2008-05-27  Werner Koch  <wk@g10code.com>
 
 	* w32-pth.c (_pth_malloc, _pth_calloc, _pth_free): New.  Always
@@ -66,13 +74,6 @@
 	invocation.  Do not reset the event for pipes.  Add lengthy note
 	about remaining issues.
 	(do_pth_event_body): Fix type in va_arg invocation.
-
-2007-11-20  Werner Koch  <wk@g10code.com>
-
-	* pth.h (PTH_EVENT_HANDLE): New.
-	* w32-pth.c (struct pth_event_s): Add HANDLE.
-	(do_pth_event_body, do_pth_wait): Implement handle event.
-	(do_pth_event_free): Do not close HD for a handle event.
 
 2007-08-16  Werner Koch  <wk@g10code.com>
 
