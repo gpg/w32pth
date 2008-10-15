@@ -1,3 +1,8 @@
+2008-10-15  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (map_w32_to_errno): Return EPIPE.
+	(do_pth_write): Fix bogus error checking for WriteFile.
+
 2008-10-13  Werner Koch  <wk@g10code.com>
 
 	* pth.h (PTH_EVENT_HANDLE): New.  Note that this was orginally

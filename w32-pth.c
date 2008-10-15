@@ -269,6 +269,9 @@ map_w32_to_errno (DWORD w32_err)
 
     case ERROR_NOT_ENOUGH_MEMORY:
       return ENOMEM;
+      
+    case ERROR_NO_DATA:
+      return EPIPE;
 
     default:
       return EIO;
@@ -672,16 +675,14 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	  
 	  /* This is no real error because we first need to figure out
 	     if we have a handle or a socket.  */
-
-	  n = WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL);
-	  if (n == -1)
+	  if (!WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL))
 	    {
+	      n = -1;
+	      errno = map_w32_to_errno (GetLastError ());
 	      if (DBG_ERROR)
 		fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
-	      n = -1;
-	      errno = map_w32_to_errno (GetLastError ());
 	    }
 	  else
 	    n = (int) nwrite;
