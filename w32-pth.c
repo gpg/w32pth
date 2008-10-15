@@ -75,6 +75,9 @@ static HANDLE pth_signo_ev;
 /* Mutex to make sure only one thread is running. */
 static CRITICAL_SECTION pth_shd;
 
+/* Counter to track the number of PTH threads.  */
+static int thread_counter;
+
 /* Object used by update_fdarray.  */
 struct fdarray_item_s 
 {
@@ -472,6 +475,7 @@ pth_init (void)
     return FALSE;
   
   pth_initialized = 1;
+  thread_counter = 1;
   EnterCriticalSection (&pth_shd);
   return TRUE;
 }
@@ -524,13 +528,29 @@ pth_ctrl (unsigned long query, ...)
     case PTH_CTRL_GETAVLOAD:
     case PTH_CTRL_GETPRIO:
     case PTH_CTRL_GETNAME:
+      return -1;
+
     case PTH_CTRL_GETTHREADS_NEW:
+      return 0; /* Not strictly correct.  */
+
     case PTH_CTRL_GETTHREADS_READY:
+      return thread_counter? (thread_counter-1):0;
+
     case PTH_CTRL_GETTHREADS_RUNNING:
+      return thread_counter? 1:0;
+
     case PTH_CTRL_GETTHREADS_WAITING:
+      return -1; /* We don't have this info.  */
+
     case PTH_CTRL_GETTHREADS_SUSPENDED:
+      return -1; /* We don't have this info.  */
+
     case PTH_CTRL_GETTHREADS_DEAD:
+      return 0;
+
     case PTH_CTRL_GETTHREADS:
+      return thread_counter;
+
     default:
       return -1;
     }
@@ -1297,13 +1317,18 @@ pth_join (pth_t hd, void **value)
 int
 pth_cancel (pth_t hd)
 {
+  int ok = 0;
+
   if (!hd)
     return -1;
   implicit_init ();
   enter_pth (__FUNCTION__);
   WaitForSingleObject (hd, 1000);
-  TerminateThread (hd, 0);
+  if (TerminateThread (hd, 0))
+    ok = 1;
   leave_pth (__FUNCTION__);
+  if (ok)
+    thread_counter--;
   return TRUE;
 }
 
@@ -1312,12 +1337,17 @@ pth_cancel (pth_t hd)
 int
 pth_abort (pth_t hd)
 {
+  int ok = 0;
+
   if (!hd)
     return -1;
   implicit_init ();
   enter_pth (__FUNCTION__);
-  TerminateThread (hd, 0);
+  if (TerminateThread (hd, 0))
+    ok = 1;
   leave_pth (__FUNCTION__);
+  if (ok)
+    thread_counter--;
   return TRUE;
 }
 
@@ -1622,12 +1652,16 @@ launch_thread (void *arg)
   if (c)
     {
       leave_pth (__FUNCTION__);
+
+      thread_counter++;
       c->thread (c->arg);
       if (!c->joinable && c->th)
         {
           CloseHandle (c->th);
           c->th = NULL;
         }
+      thread_counter--;
+
       /* FIXME: We would badly fail if someone accesses the now
          deallocated handle. Don't use it directly but setup proper
          scheduling queues.  */

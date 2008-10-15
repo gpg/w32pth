@@ -1,5 +1,10 @@
 2008-10-15  Werner Koch  <wk@g10code.com>
 
+	* w32-pth.c (thread_counter): New.
+	(pth_ctrl): Return thread counters.
+	(launch_thread, pth_cancel, pth_abort): Track number of threads.
+	(pth_init): Set counter to 1.
+
 	* w32-pth.c (map_w32_to_errno): Return EPIPE.
 	(do_pth_write): Fix bogus error checking for WriteFile.
 
