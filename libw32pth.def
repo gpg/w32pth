@@ -73,3 +73,6 @@ EXPORTS
 
       pth_usleep @42
       pth_thread_id @43
+
+      pth_cancel @44
+
