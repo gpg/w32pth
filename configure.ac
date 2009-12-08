@@ -54,6 +54,7 @@ AC_CONFIG_SRCDIR([w32-pth.c])
 AC_CANONICAL_TARGET
 AM_INIT_AUTOMAKE($PACKAGE, $VERSION)
 AM_CONFIG_HEADER(config.h)
+AC_CONFIG_MACRO_DIR([m4])
 #AB_INIT
 
 AC_GNU_SOURCE
@@ -105,9 +106,9 @@ AC_PROG_LN_S
 AC_PROG_MAKE_SET
 AC_C_INLINE
 
-AC_LIBTOOL_WIN32_DLL
-AC_LIBTOOL_RC
-AM_PROG_LIBTOOL
+LT_PREREQ([2.2.6])
+LT_INIT([win32-dll disable-static])
+LT_LANG([Windows Resource])
 
 if test "$GCC" = yes; then
     CFLAGS="$CFLAGS -Wall -Wcast-align -Wshadow -Wstrict-prototypes"

@@ -30,18 +30,18 @@ bin_SCRIPTS = pth-config
 include_HEADERS = pth.h
 lib_LTLIBRARIES = libw32pth.la
 
-LTRCCOMPILE = $(LIBTOOL) --mode=compile $(RC) \
-     `echo $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) | \
-     sed -e 's/-I/--include-dir /g;s/-D/--define /g'`
+RCCOMPILE = $(RC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) \
+        $(libgpg_error_la_CPPFLAGS) $(AM_CPPFLAGS) $(CPPFLAGS)
+LTRCCOMPILE = $(LIBTOOL) --mode=compile --tag=RC $(RCCOMPILE)
+
+SUFFIXES: .rc .lo
 
 .rc.lo:
 	$(LTRCCOMPILE) -i $< -o $@
 
 w32pth_res = versioninfo.lo
-w32pth_res_ldflag = -Wl,.libs/versioninfo.o
 no_undefined = -no-undefined
 export_symbols = -export-symbols $(srcdir)/libw32pth.def
-w32pth_deps = $(w32pth_res) libw32pth.def
 
 install-def-file:
 	$(INSTALL) $(srcdir)/libw32pth.def $(DESTDIR)$(libdir)/libw32pth.def
@@ -49,11 +49,11 @@ install-def-file:
 uninstall-def-file:
 	-rm $(DESTDIR)$(libdir)/libw32pth.def
 
-libw32pth_la_LDFLAGS = $(w32pth_res_ldflag) $(no_undefined) $(export_symbols) \
+libw32pth_la_LDFLAGS = $(no_undefined) $(export_symbols) \
       -version-info \
       @W32PTH_LT_CURRENT@:@W32PTH_LT_REVISION@:@W32PTH_LT_AGE@
-libw32pth_la_DEPENDENCIES = $(w32pth_deps)
-libw32pth_la_LIBADD = @LTLIBOBJS@ -lws2_32
+libw32pth_la_DEPENDENCIES = $(w32pth_res) libw32pth.def
+libw32pth_la_LIBADD = $(w32pth_res) @LTLIBOBJS@ -lws2_32
 libw32pth_la_SOURCES = pth.h debug.h w32-pth.c w32-io.h w32-io.c
 
 
@@ -63,3 +63,4 @@ uninstall-local: uninstall-def-file
 
 dist-hook:
 	@set -e; echo "$(VERSION)" > $(distdir)/VERSION
+

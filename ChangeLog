@@ -1,3 +1,25 @@
+2009-12-08  Marcus Brinkmann  <marcus@g10code.de>
+
+	Update to libtool 2.2.6a.
+	* configure.ac: Invoke AC_CONFIG_MACRO_DIR.
+	(AC_LIBTOOL_WIN32_DLL, AC_LIBTOOL_RC): Replace by ...
+	(LT_PREREQ, LT_INIT, LT_LANG): ... these.
+	* config.guess, config.sub, install-sh, ltmain.sh:
+	Updated to libtool 2.2.6a.
+	* m4/libtool.m4, m4/ltoptions.m4, m4/ltsugar.m4, m4/ltversion.m4,
+	m4/lt~obsolete.m4: New files from libtool 2.2.6a.
+	* Makefile.am (LTRCCOMPILE): Refactor with ...
+	(RCCOMPILE): ... this new macro.  Add $(w32pth_la_CPPFLAGS).
+	(SUFFIXES): Add .lo.
+	(.rc.o): Change to ...
+	(.rc.lo): ... this implicit rule.
+	(w32pth_res_ldflag): Removed.
+	(w32pth_res): Use libtool object file name here.
+	(install-def-file): Fix typo.
+	(w32pth_la_LDFLAGS): Remove w32pth_res_ldflag usage.
+	(w32pth_la_LIBADD): Add w32pth_res.
+	* depcomp, compile, INSTALL, missing: Update from automake 1.10.
+	
 2008-10-17  Marcus Brinkmann  <marcus@g10code.com>
 
 	Released 2.0.2.
