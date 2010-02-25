@@ -1,6 +1,6 @@
 /* pth.h - GNU Pth emulation for W32 (MS Windows).
  * Copyright (c) 1999-2003 Ralf S. Engelschall <rse@engelschall.com>
- * Copyright (C) 2004, 2006, 2007, 2008 g10 Code GmbH
+ * Copyright (C) 2004, 2006, 2007, 2008, 2010 g10 Code GmbH
  *
  * This file is part of W32PTH.
  *
@@ -15,9 +15,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * License along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * ------------------------------------------------------------------
  * This code is based on Ralf Engelschall's GNU Pth, a non-preemptive
@@ -281,7 +279,7 @@ int pth_yield (pth_t tid);
 
 
 /* Special W32 function to cope with the problem that pth_self returns
-   just a pseudo handle which is not very usefule for debugging.  */
+   just a pseudo handle which is not very useful for debugging.  */
 unsigned long pth_thread_id (void);
 #define PTH_HAVE_PTH_THREAD_ID 1
 

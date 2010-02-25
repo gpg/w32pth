@@ -29,8 +29,22 @@
 
 #include <assert.h>
 
+#ifdef HAVE_W32CE_SYSTEM
+# include <winioctl.h>
+# include <devload.h>
+# define GPGCEDEV_IOCTL_SET_HANDLE                                      \
+  CTL_CODE (FILE_DEVICE_STREAMS, 2048, METHOD_BUFFERED, FILE_ANY_ACCESS)
+# define GPGCEDEV_IOCTL_MAKE_PIPE                                        \
+  CTL_CODE (FILE_DEVICE_STREAMS, 2049, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif /*HAVE_W32CE_SYSTEM*/
+
+
+
+#include "utils.h"
 #include "debug.h"
 #include "w32-io.h"
+
+
 
 
 struct critsect_s
@@ -178,7 +192,7 @@ _pth_debug (int level, const char *format, ...)
   UNLOCK (debug_lock);
   fflush (dbgfp);
 
-  errno = saved_errno;
+  set_errno (saved_errno);
 }
 
 
@@ -281,7 +295,7 @@ set_synchronize (HANDLE hd)
       TRACE1 (DEBUG_SYSIO, "pth:set_synchronize", hd,
 	      "DuplicateHandle failed: ec=%d", (int) GetLastError ());
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return INVALID_HANDLE_VALUE;
     }
 
@@ -544,7 +558,7 @@ _pth_io_read (int fd, void *buffer, size_t count)
   ctx = find_reader (fd, 0);
   if (!ctx)
     {
-      errno = EBADF;
+      set_errno (EBADF);
       return TRACE_SYSRES (-1);
     }
   if (ctx->eof_shortcut)
@@ -572,7 +586,7 @@ _pth_io_read (int fd, void *buffer, size_t count)
 	  TRACE_LOG ("EOF but ctx->eof flag not set");
 	  return 0;
 	}
-      errno = ctx->error_code;
+      set_errno (ctx->error_code);
       return TRACE_SYSRES (-1);
     }
   
@@ -590,7 +604,7 @@ _pth_io_read (int fd, void *buffer, size_t count)
 	  TRACE_LOG1 ("ResetEvent failed: ec=%d", (int) GetLastError ());
 	  UNLOCK (ctx->mutex);
 	  /* FIXME: Should translate the error code.  */
-	  errno = EIO;
+	  set_errno (EIO);
 	  return TRACE_SYSRES (-1);
 	}
     }
@@ -599,7 +613,7 @@ _pth_io_read (int fd, void *buffer, size_t count)
       TRACE_LOG1 ("SetEvent failed: ec=%d", (int) GetLastError ());
       UNLOCK (ctx->mutex);
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
   UNLOCK (ctx->mutex);
@@ -865,7 +879,7 @@ _pth_io_write (int fd, const void *buffer, size_t count)
 	  TRACE_LOG1 ("ResetEvent failed: ec=%d", (int) GetLastError ());
 	  UNLOCK (ctx->mutex);
 	  /* FIXME: Should translate the error code.  */
-	  errno = EIO;
+	  set_errno (EIO);
 	  return TRACE_SYSRES (-1);
 	}
       UNLOCK (ctx->mutex);
@@ -879,9 +893,9 @@ _pth_io_write (int fd, const void *buffer, size_t count)
     {
       UNLOCK (ctx->mutex);
       if (ctx->error_code == ERROR_NO_DATA)
-        errno = EPIPE;
+        set_errno (EPIPE);
       else
-        errno = EIO;
+        set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
 
@@ -901,7 +915,7 @@ _pth_io_write (int fd, const void *buffer, size_t count)
       TRACE_LOG1 ("ResetEvent failed: ec=%d", (int) GetLastError ());
       UNLOCK (ctx->mutex);
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
   if (!SetEvent (ctx->have_data))
@@ -909,7 +923,7 @@ _pth_io_write (int fd, const void *buffer, size_t count)
       TRACE_LOG1 ("SetEvent failed: ec=%d", (int) GetLastError ());
       UNLOCK (ctx->mutex);
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
   UNLOCK (ctx->mutex);
@@ -917,6 +931,76 @@ _pth_io_write (int fd, const void *buffer, size_t count)
   return TRACE_SYSRES ((int) count);
 }
 
+
+/* WindowsCE does not provide a pipe feature.  However we need
+   something like a pipe to convey data between processes and in some
+   cases within a process.  This replacement is not only used by
+   libassuan but exported and thus usable by gnupg and gpgme as well.  */
+static DWORD
+create_pipe (HANDLE *read_hd, HANDLE *write_hd,
+             LPSECURITY_ATTRIBUTES sec_attr, DWORD size)
+{
+#ifdef HAVE_W32CE_SYSTEM
+  HANDLE hd[2] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
+  TRACE_BEG (DEBUG_SYSIO, "pth:create_pipe", read_hd);
+
+  *read_hd = *write_hd = INVALID_HANDLE_VALUE;
+
+  ActivateDevice (L"Drivers\\GnuPG_Device", 0);
+
+  /* Note: Using "\\$device\\GPG1" should be identical to "GPG1:".
+     However this returns an invalid parameter error without having
+     called GPG_Init in the driver.  The docs mention something about
+     RegisterAFXEx but that API is not documented.  */
+  hd[0] = CreateFile (L"GPG1:", GENERIC_READ,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (hd[0] == INVALID_HANDLE_VALUE)
+    return 0;
+
+  if (!DeviceIoControl (hd[0], GPGCEDEV_IOCTL_SET_HANDLE,
+                        &hd[0], sizeof hd[0], NULL, 0, NULL, NULL))
+    TRACE_LOG1 ("GPGCEDEV_IOCTL_SET_HANDLE(0) failed: %d\n", 
+                (int)GetLastError ());
+  
+  hd[1] = CreateFile (L"GPG1:", GENERIC_WRITE,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,NULL);
+  if (hd[1] == INVALID_HANDLE_VALUE)
+    {
+      DWORD lasterr = GetLastError ();
+      CloseHandle (hd[0]);
+      SetLastError (lasterr);
+      return 0;
+    }
+  if (!DeviceIoControl (hd[1], GPGCEDEV_IOCTL_SET_HANDLE,
+                        &hd[1], sizeof hd[1], NULL, 0, NULL, NULL))
+    TRACE_LOG1 ("GPGCEDEV_IOCTL_SET_HANDLE(1) failed: %d\n", 
+                (int)GetLastError ());
+
+  if (!DeviceIoControl (hd[0], GPGCEDEV_IOCTL_MAKE_PIPE,
+                        &hd[1], sizeof hd[1], NULL, 0, NULL, NULL))
+    {
+      TRACE_LOG1 ("GPGCEDEV_IOCTL_MAKE_PIPE failed: %d\n", 
+                  (int)GetLastError ());
+      if (hd[0] != INVALID_HANDLE_VALUE)
+        CloseHandle (hd[0]);
+      if (hd[1] != INVALID_HANDLE_VALUE)
+        CloseHandle (hd[1]);
+      TRACE_SUC ();
+      return 0;
+    }
+  else
+    {
+      *read_hd = hd[0];
+      *write_hd = hd[1];
+      TRACE_SUC ();
+      return 1;
+    }
+#else /*!HAVE_W32CE_SYSTEM*/
+  return CreatePipe (read_hd, write_hd, sec_attr, size);
+#endif /*!HAVE_W32CE_SYSTEM*/
+}
 
 int
 pth_pipe (int filedes[2], int inherit_idx)
@@ -932,17 +1016,20 @@ pth_pipe (int filedes[2], int inherit_idx)
   sec_attr.nLength = sizeof (sec_attr);
   sec_attr.bInheritHandle = FALSE;
   
-  if (!CreatePipe (&rh, &wh, &sec_attr, PIPEBUF_SIZE))
+  if (!create_pipe (&rh, &wh, &sec_attr, PIPEBUF_SIZE))
     {
       TRACE_LOG1 ("CreatePipe failed: ec=%d", (int) GetLastError ());
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
 
   /* Make one end inheritable.  */
   if (inherit_idx == 0)
     {
+      /* Under Windows CE < 6 handles are global without a concept of
+         inheritable handles.  */
+#ifndef HAVE_W32CE_SYSTEM
       HANDLE hd;
       if (!DuplicateHandle (GetCurrentProcess(), rh,
 			    GetCurrentProcess(), &hd, 0,
@@ -953,16 +1040,18 @@ pth_pipe (int filedes[2], int inherit_idx)
 	  CloseHandle (rh);
 	  CloseHandle (wh);
 	  /* FIXME: Should translate the error code.  */
-	  errno = EIO;
+	  set_errno (EIO);
 	  return TRACE_SYSRES (-1);
         }
       CloseHandle (rh);
       rh = hd;
+#endif /*!HAVE_W32CE_SYSTEM*/
       /* Pre-create the writer thread.  */
       find_reader (handle_to_fd (wh), 1);
     }
   else if (inherit_idx == 1)
     {
+#ifndef HAVE_W32CE_SYSTEM
       HANDLE hd;
       if (!DuplicateHandle( GetCurrentProcess(), wh,
 			    GetCurrentProcess(), &hd, 0,
@@ -973,11 +1062,12 @@ pth_pipe (int filedes[2], int inherit_idx)
 	  CloseHandle (rh);
 	  CloseHandle (wh);
 	  /* FIXME: Should translate the error code.  */
-	  errno = EIO;
+	  set_errno (EIO);
 	  return TRACE_SYSRES (-1);
         }
       CloseHandle (wh);
       wh = hd;
+#endif /*!HAVE_W32CE_SYSTEM*/
       /* Pre-create the reader thread.  */
       find_reader (handle_to_fd (rh), 1);
     }
@@ -995,7 +1085,7 @@ pth_close (int fd)
 
   if (fd == -1)
     {
-      errno = EBADF;
+      set_errno (EBADF);
       return TRACE_SYSRES (-1);
     }
 
@@ -1006,7 +1096,7 @@ pth_close (int fd)
     { 
       TRACE_LOG1 ("CloseHandle failed: ec=%d", (int) GetLastError ());
       /* FIXME: Should translate the error code.  */
-      errno = EIO;
+      set_errno (EIO);
       return TRACE_SYSRES (-1);
     }
 

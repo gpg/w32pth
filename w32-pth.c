@@ -1,6 +1,6 @@
 /* w32-pth.c - GNU Pth emulation for W32 (MS Windows).
  * Copyright (c) 1999-2003 Ralf S. Engelschall <rse@engelschall.com>
- * Copyright (C) 2004, 2006, 2007, 2008 g10 Code GmbH
+ * Copyright (C) 2004, 2006, 2007, 2008, 2010 g10 Code GmbH
  *
  * This file is part of W32PTH.
  *
@@ -15,9 +15,7 @@
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
- * License along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * License along with this program; if not, see <http://www.gnu.org/licenses/>.
  *
  * ------------------------------------------------------------------
  * This code is based on Ralf Engelschall's GNU Pth, a non-preemptive
@@ -32,9 +30,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <io.h>
-#include <signal.h>
+#ifdef HAVE_SIGNAL_H
+# include <signal.h>
+#endif
 #include <errno.h>
 
+#include "utils.h"
 #include "debug.h"
 #include "w32-io.h"
 
@@ -84,6 +85,22 @@ struct fdarray_item_s
   int fd;
   long netevents;
 };
+
+
+#ifdef HAVE_W32CE_SYSTEM
+/* W32CE timer implementation.  */
+static HANDLE w32ce_timer_ev;           /* Event to kick the timer thread.  */
+static CRITICAL_SECTION w32ce_timer_cs; /* Protect the objects below.  */
+static int w32ce_timer_thread_lauchend; /* True if the timer thread has
+                                           been launched.  */
+static struct               /* The timer array.  */
+{
+  HANDLE event;             /* Event to be signaled for this timer or
+                               NULL for an unused slot.  */
+  int active;               /* Timer is active.  */
+  unsigned long remaining;  /* Remaining time in milliseconds. */
+} w32ce_timer[32];
+#endif /*HAVE_W32CE_SYSTEM*/
 
 
 /* Pth events are store in a double linked event ring.  */
@@ -187,23 +204,111 @@ _pth_free (void *p)
 }
 
 
+/* Return a string from the Win32 Registry or NULL in case of error.
+   The returned string is allocated using a plain malloc and thus the
+   caller needs to call the standard free().  The string is looked up
+   under HKEY_LOCAL_MACHINE.  */
+#ifdef HAVE_W32CE_SYSTEM
+static char *
+w32_read_registry (const wchar_t *dir, const wchar_t *name)
+{
+  HKEY handle;
+  DWORD n, nbytes;
+  wchar_t *buffer = NULL;
+  char *result = NULL;
+  
+  if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, dir, 0, KEY_READ, &handle))
+    return NULL; /* No need for a RegClose, so return immediately. */
+
+  nbytes = 1;
+  if (RegQueryValueEx (handle, name, 0, NULL, NULL, &nbytes))
+    goto leave;
+  buffer = malloc ((n=nbytes+2));
+  if (!buffer)
+    goto leave;
+  if (RegQueryValueEx (handle, name, 0, NULL, (PBYTE)buffer, &n))
+    {
+      free (buffer);
+      buffer = NULL;
+      goto leave;
+    }
+  
+  n = WideCharToMultiByte (CP_UTF8, 0, buffer, nbytes, NULL, 0, NULL, NULL);
+  if (n < 0 || (n+1) <= 0)
+    goto leave;
+  result = malloc (n+1);
+  if (!result)
+    goto leave;
+  n = WideCharToMultiByte (CP_UTF8, 0, buffer, nbytes, result, n, NULL, NULL);
+  if (n < 0)
+    {
+      free (result);
+      result = NULL;
+      goto leave;
+    }
+  result[n] = 0;
+
+ leave:
+  free (buffer);
+  RegCloseKey (handle);
+  return result;
+}
+#endif /*HAVE_W32CE_SYSTEM*/
+
+#ifdef HAVE_W32CE_SYSTEM
+/* Replacement for getenv which takes care of the our use of getenv.
+   The code is not thread safe but we expect it to work in all cases
+   because it is called for the first time early enough.  */
+static char *
+getenv (const char *name)
+{
+  static int initialized;
+  static char *val_debug;
+
+  if (!initialized)
+    {
+      val_debug = w32_read_registry (L"\\Software\\GNU\\w32pth",
+                                     L"debug");
+      initialized = 1;
+    }
+
+
+  if (!strcmp (name, "PTH_DEBUG"))
+    return val_debug;
+  else
+    return NULL;
+}
+#endif /*HAVE_W32CE_SYSTEM*/
+
+
+
 static char *
 w32_strerror (char *strerr, size_t strerrsize)
 {
+#ifdef HAVE_W32CE_SYSTEM
+  /* There is only a wchar_t FormatMessage.  It does not make much
+     sense to play the conversion game; we print only the code.  */
+  snprintf (strerr, strerrsize, "ec=%d", (int)GetLastError ());
+#else
   if (strerrsize > 1)
     FormatMessage (FORMAT_MESSAGE_FROM_SYSTEM, NULL, (int)GetLastError (),
                    MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
                    strerr, strerrsize, NULL);
+#endif
   return strerr;
 }
 
 static char *
 wsa_strerror (char *strerr, size_t strerrsize)
 {
+#ifdef HAVE_W32CE_SYSTEM
+  snprintf (strerr, strerrsize, "ec=%d", (int)WSAGetLastError ());
+#else
   if (strerrsize > 1)
     FormatMessage (FORMAT_MESSAGE_FROM_SYSTEM, NULL, (int)WSAGetLastError (),
                    MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
                    strerr, strerrsize, NULL);
+#endif
   return strerr;
 }
 
@@ -331,6 +436,9 @@ create_event (void)
                  w32_strerror (strerr, sizeof strerr));
       return NULL;
     }
+#ifdef HAVE_W32CE_SYSTEM
+  h2 = h;
+#else
   if (!DuplicateHandle (GetCurrentProcess(), h,
                         GetCurrentProcess(), &h2,
                         EVENT_MODIFY_STATE|SYNCHRONIZE, FALSE, 0 ) ) 
@@ -344,6 +452,7 @@ create_event (void)
       return NULL;
     }
   CloseHandle (h);
+#endif
   if (DBG_INFO)
     {
       fprintf (dbgfp, "%s: CreateEvent(%p) succeeded\n",
@@ -352,7 +461,8 @@ create_event (void)
   return h2;
 }
 
-#if 0 /* Not yet used.  */
+
+#ifdef TEST
 static void
 set_event (HANDLE h)
 {
@@ -393,35 +503,223 @@ reset_event (HANDLE h)
 }
 
 
+#ifdef HAVE_W32CE_SYSTEM
+/* WindowsCE does not provide CreateWaitableTimer et al.  Thus we have
+   to roll our own.  The timer is not fully correct because we use
+   GetTickCount and don't adjust for the time it takes to call it.  */
+static DWORD CALLBACK 
+w32ce_timer_thread (void *arg)
+{
+  int idx;
+  DWORD timeout, elapsed, lasttick;
+
+  (void)arg;
+
+  lasttick = GetTickCount ();
+  for (;;)
+    {
+      elapsed = lasttick;  /* Get start time.  */
+      timeout = 0;
+      EnterCriticalSection (&w32ce_timer_cs);
+      for (idx=0; idx < DIM (w32ce_timer); idx++)
+        {
+          if (w32ce_timer[idx].event && w32ce_timer[idx].active
+              && w32ce_timer[idx].remaining > timeout)
+            timeout = w32ce_timer[idx].remaining;
+        }
+      LeaveCriticalSection (&w32ce_timer_cs);
+      if (timeout > 0x7fffffff)
+        timeout = 0x7fffffff;
+      switch (WaitForSingleObject (w32ce_timer_ev, (DWORD)timeout))
+        {
+        case WAIT_OBJECT_0:
+          break;
+        case WAIT_TIMEOUT:
+          break;
+        case WAIT_FAILED:
+          if (DBG_ERROR)
+            fprintf (dbgfp, 
+                     "%s:w32ce_timer_thread: WFSO failed: rc=%d\n",
+                     log_get_prefix (NULL), (int)GetLastError ());
+          /* This is likely to happen if a handle has been closed
+             while we are waiting for it.  */
+          break;
+        }
+      EnterCriticalSection (&w32ce_timer_cs);
+      lasttick = GetTickCount ();
+      elapsed = lasttick - elapsed;
+      for (idx=0; idx < DIM (w32ce_timer); idx++)
+        {
+          if (w32ce_timer[idx].event && w32ce_timer[idx].active)
+            {
+              if (w32ce_timer[idx].remaining > elapsed)
+                w32ce_timer[idx].remaining -= elapsed;
+              else
+                {
+                  w32ce_timer[idx].remaining = 0;
+                  w32ce_timer[idx].active = 0;
+                  if (!SetEvent (w32ce_timer[idx].event))
+                    {
+                      if (DBG_ERROR)
+                        fprintf (dbgfp, "%s:w32ce_timer_thread: SetEvent(%p) "
+                                 "failed: rc=%d\n",
+                                 log_get_prefix (NULL), (int)GetLastError ());
+                    }
+                }
+            }
+        }
+      LeaveCriticalSection (&w32ce_timer_cs);
+    }
+  
+  return 0; /*NOTREACHED*/
+}
+#endif /*HAVE_W32CE_SYSTEM*/
+
 
 /* Create a timer event. */
 static HANDLE
 create_timer (void)
 {
-  SECURITY_ATTRIBUTES sa;
   HANDLE h;
-  char strerr[256];
+
+#ifdef HAVE_W32CE_SYSTEM
+  int idx;
+
+  EnterCriticalSection (&w32ce_timer_cs);
+  if (!w32ce_timer_thread_lauchend)
+    {
+      h = CreateThread (NULL, 0, w32ce_timer_thread, NULL, 0, NULL);
+      if (!h)
+        {
+          if (DBG_ERROR)
+            fprintf (dbgfp, "%s:create_timer: CreateThread failed: rc=%d\n",
+                     log_get_prefix (NULL), (int)GetLastError ());
+          goto leave;
+        }
+      CloseHandle (h);
+      w32ce_timer_thread_lauchend = 1;
+    }
+  h = NULL;
+  for (idx = 0; idx < DIM (w32ce_timer); idx++)
+    if (!w32ce_timer[idx].event)
+      break;
+  if (idx == DIM (w32ce_timer))
+    {
+      SetLastError (ERROR_TOO_MANY_OPEN_FILES);
+      goto leave;
+    }
+  /* We create a manual reset event.  */
+  w32ce_timer[idx].event = CreateEvent (NULL, TRUE, FALSE, NULL);
+  if (!w32ce_timer[idx].event)
+    goto leave;
+  w32ce_timer[idx].active = 0;
+  h = w32ce_timer[idx].event;
+
+leave:
+  LeaveCriticalSection (&w32ce_timer_cs);
+
+#else /* Plain Windows.  */
+
+  SECURITY_ATTRIBUTES sa;
 
   memset (&sa, 0, sizeof sa);
   sa.bInheritHandle = TRUE;
   sa.lpSecurityDescriptor = NULL;
   sa.nLength = sizeof sa;
   h = CreateWaitableTimer (&sa, TRUE, NULL);
+
+#endif /* Plain Windows.  */
+
   if (!h)
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: CreateWaitableTimer failed: %s\n",
-                 log_get_prefix (NULL), 
-                 w32_strerror (strerr, sizeof strerr));
-      return NULL;
+        fprintf (dbgfp, "%s: CreateWaitableTimer failed: rc=%d\n",
+                 log_get_prefix (NULL), (int)GetLastError ());
     }
-  if (DBG_INFO)
+  else if (DBG_INFO)
     {
       fprintf (dbgfp, "%s: CreateWaitableTimer(%p) succeeded\n",
                log_get_prefix (NULL), h);
     }
   return h;
 }
+
+static int
+set_timer (HANDLE hd, DWORD milliseconds)
+{
+#ifdef HAVE_W32CE_SYSTEM
+  int idx;
+  int result = -1;
+
+  EnterCriticalSection (&w32ce_timer_cs);
+  for (idx = 0; idx < DIM (w32ce_timer); idx++)
+    if (hd && w32ce_timer[idx].event == hd)
+      {
+        w32ce_timer[idx].remaining = milliseconds;
+        if (!ResetEvent (w32ce_timer[idx].event))
+          {
+            if (DBG_ERROR)
+              fprintf (dbgfp, "%s:set_timer: ResetEvent(%p) failed: rc=%d\n",
+                       log_get_prefix (NULL), (int)GetLastError ());
+          }
+        else if (!SetEvent (w32ce_timer_ev))
+          {
+            if (DBG_ERROR)
+              fprintf (dbgfp, "%s:set_timer: SetEvent(%p) failed: rc=%d\n",
+                       log_get_prefix (NULL), (int)GetLastError ());
+          }
+        else
+          {
+            w32ce_timer[idx].active = 1;
+            result = 0;
+          }
+        break;
+      }
+  if (idx == DIM (w32ce_timer))
+    SetLastError (ERROR_INVALID_HANDLE);
+  LeaveCriticalSection (&w32ce_timer_cs);
+  return result;
+#else /* Plain Windows.  */
+  LARGE_INTEGER ll;
+  char strerr[256];
+  
+  ll.QuadPart = - (milliseconds * 10000);
+  if (!SetWaitableTimer (hd, &ll, 0, NULL, NULL, FALSE))
+    {
+      if (DBG_ERROR)
+        fprintf (dbgfp,"%s: %s: SetWaitableTimer failed: %s\n",
+                 log_get_prefix (NULL), __func__,
+                 w32_strerror (strerr, sizeof strerr));
+      return -1;
+    }
+  return 0;
+#endif /* Plain Windows.  */
+}
+
+static void
+destroy_timer (HANDLE h)
+{
+#ifdef HAVE_W32CE_SYSTEM
+  int idx;
+
+  EnterCriticalSection (&w32ce_timer_cs);
+  for (idx = 0; idx < DIM (w32ce_timer); idx++)
+    if (w32ce_timer[idx].event == h)
+      {
+        CloseHandle (w32ce_timer[idx].event);
+        w32ce_timer[idx].event = NULL;
+        break;
+      }
+  LeaveCriticalSection (&w32ce_timer_cs);
+#else /* Plain Windows.  */
+  CloseHandle (h);
+#endif /* Plain Windows.  */
+}
+
+
+
+
+
 
 
 int
@@ -473,7 +771,15 @@ pth_init (void)
   pth_signo_ev = create_event ();
   if (!pth_signo_ev)
     return FALSE;
-  
+
+#ifdef HAVE_W32CE_SYSTEM
+  InitializeCriticalSection (&w32ce_timer_cs);
+  w32ce_timer_ev = CreateEvent (NULL, FALSE, FALSE, NULL);
+  if (!w32ce_timer_ev)
+    return FALSE;
+#endif /*HAVE_W32CE_SYSTEM*/  
+
+
   pth_initialized = 1;
   thread_counter = 1;
   EnterCriticalSection (&pth_shd);
@@ -491,7 +797,12 @@ pth_kill (void)
       pth_signo_ev = NULL;
     }
   if (pth_initialized)
-    DeleteCriticalSection (&pth_shd);
+    {
+#ifdef HAVE_W32CE_SYSTEM
+      DeleteCriticalSection (&w32ce_timer_cs);
+#endif /*HAVE_W32CE_SYSTEM*/  
+      DeleteCriticalSection (&pth_shd);
+    }
   WSACleanup ();
   pth_initialized = 0;
   return TRUE;
@@ -597,13 +908,13 @@ do_pth_read (int fd,  void * buffer, size_t size)
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
 	      n = -1;
-	      errno = map_w32_to_errno (GetLastError ());
+	      set_errno (map_w32_to_errno (GetLastError ()));
 	    }
 	  else
 	    n = (int) nread;
 	}
       else if (n == -1)
-	errno = map_wsa_to_errno (WSAGetLastError ());
+	set_errno (map_wsa_to_errno (WSAGetLastError ()));
     }
 
   return n;
@@ -643,7 +954,7 @@ pth_read_ev (int fd, void *buffer, size_t size, pth_event_t ev_extra)
 #ifdef NO_PTH_MODE_STATIC
 	  do_pth_event_free (ev, PTH_FREE_THIS);
 #endif
-	  errno = EINTR;
+	  set_errno (EINTR);
 	  leave_pth (__FUNCTION__);
 	  return -1;
 	}
@@ -698,7 +1009,7 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	  if (!WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL))
 	    {
 	      n = -1;
-	      errno = map_w32_to_errno (GetLastError ());
+	      set_errno (map_w32_to_errno (GetLastError ()));
 	      if (DBG_ERROR)
 		fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
 			 log_get_prefix (NULL), fd,
@@ -708,7 +1019,7 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	    n = (int) nwrite;
 	}
       else if (n == -1)
-	errno = map_wsa_to_errno (WSAGetLastError ());
+	set_errno (map_wsa_to_errno (WSAGetLastError ()));
     }
 
   return n;
@@ -746,9 +1057,9 @@ pth_write_ev (int fd, const void *buffer, size_t size, pth_event_t ev_extra)
       if (pth_event_status(ev) != PTH_STATUS_OCCURRED)
 	{
 #ifdef NO_PTH_MODE_STATIC
-  do_pth_event_free (ev, PTH_FREE_THIS);
+          do_pth_event_free (ev, PTH_FREE_THIS);
 #endif
-	  errno = EINTR;
+          set_errno (EINTR);
 	  leave_pth (__FUNCTION__);
 	  return -1;
 	}
@@ -870,7 +1181,7 @@ pth_select_ev (int nfd, fd_set *rfds, fd_set *wfds, fd_set *efds,
   if (ev_extra && !selected)
     {
       rc = -1;
-      errno = EINTR;
+      set_errno (EINTR);
     }
 
  leave:
@@ -1744,7 +2055,9 @@ do_pth_event_free (pth_event_t ev, int mode)
       do
         {
           pth_event_t next = cur->next;
-          if (cur->u_type != PTH_EVENT_HANDLE)
+          if (cur->u_type == PTH_EVENT_TIME)
+            destroy_timer (cur->hd);
+          else if (cur->u_type != PTH_EVENT_HANDLE)
             CloseHandle (cur->hd);
           cur->hd = NULL;
           _pth_free (cur);
@@ -1756,7 +2069,9 @@ do_pth_event_free (pth_event_t ev, int mode)
     {
       ev->prev->next = ev->next;
       ev->next->prev = ev->prev;
-      if (ev->u_type != PTH_EVENT_HANDLE)
+      if (ev->u_type == PTH_EVENT_TIME)
+        destroy_timer (ev->hd);
+      else if (ev->u_type != PTH_EVENT_HANDLE)
         CloseHandle (ev->hd);
       ev->hd = NULL;	    
       _pth_free (ev);
@@ -1946,22 +2261,11 @@ do_pth_wait (pth_event_t ev)
           
         case PTH_EVENT_TIME:
           TRACE_LOG ("adding timer event");
-          {
-            LARGE_INTEGER ll;
-
-            ll.QuadPart = - (r->u.tv.tv_sec * 10000000ll
-                             + r->u.tv.tv_usec * 10); 
-            if (!SetWaitableTimer (r->hd, &ll, 0, NULL, NULL, FALSE))
-              {
-                if (DBG_ERROR)
-                  fprintf (dbgfp,"%s: %s: SetWaitableTimer failed: %s\n",
-                           log_get_prefix (NULL), __func__,
-                           w32_strerror (strerr, sizeof strerr));
-                return TRACE_SYSRES (-1);
-              }
-            evarray[pos] = r;  
-            waitbuf[pos++] = r->hd;
-          }
+          if (set_timer (r->hd, (r->u.tv.tv_sec * 1000
+                                 + (r->u.tv.tv_usec+500) / 1000 )))
+            return TRACE_SYSRES (-1);
+          evarray[pos] = r;  
+          waitbuf[pos++] = r->hd;
           break;
 
         case PTH_EVENT_SELECT:
@@ -2253,7 +2557,8 @@ pth_yield (pth_t tid)
 #ifdef TEST
 #include <stdio.h>
 
-void * thread (void * c)
+void *
+thread (void * c)
 {
 
   Sleep (2000);
@@ -2264,7 +2569,8 @@ void * thread (void * c)
 }
 
 
-int main_1 (int argc, char ** argv)
+int
+main_1 (int argc, char ** argv)
 {
   pth_attr_t t;
   pth_t hd;
@@ -2287,6 +2593,7 @@ int main_1 (int argc, char ** argv)
 }
 
 
+#ifndef HAVE_W32CE_SYSTEM
 static pth_event_t 
 setup_signals (struct sigset_s *sigs, int *signo)
 {
@@ -2348,17 +2655,12 @@ main_3 (int argc, char ** argv)
   pth_kill ();
   return 0;
 }
+#endif
 
 int
 main (int argc, char ** argv)
 {
-  pth_event_t ev;
-  pth_key_t ev_key;
-
   pth_init ();
-  /*ev = pth_event (PTH_EVENT_TIME, &ev_key, pth_timeout (5, 0));
-    pth_wait (ev);
-    pth_event_free (ev, PTH_FREE_ALL);*/
   pth_sleep (5);
   pth_kill ();
   return 0;

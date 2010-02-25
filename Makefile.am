@@ -20,7 +20,7 @@
 
 ## Process this file with automake to produce Makefile.in
 
-ACLOCAL_AMFLAGS = 
+ACLOCAL_AMFLAGS = -I m4
 AUTOMAKE_OPTIONS = no-dist-gzip dist-bzip2
 DISTCHECK_CONFIGURE_FLAGS = --host=i586-mingw32msvc 
 
@@ -49,12 +49,15 @@ install-def-file:
 uninstall-def-file:
 	-rm $(DESTDIR)$(libdir)/libw32pth.def
 
+# Note that the GPG_ERROR_CFLAGS are only required for W32CE and not
+# defined on plain Windows.
+libw32pth_la_CFLAGS = $(GPG_ERROR_CFLAGS)
 libw32pth_la_LDFLAGS = $(no_undefined) $(export_symbols) \
       -version-info \
       @W32PTH_LT_CURRENT@:@W32PTH_LT_REVISION@:@W32PTH_LT_AGE@
 libw32pth_la_DEPENDENCIES = $(w32pth_res) libw32pth.def
-libw32pth_la_LIBADD = $(w32pth_res) @LTLIBOBJS@ -lws2_32
-libw32pth_la_SOURCES = pth.h debug.h w32-pth.c w32-io.h w32-io.c
+libw32pth_la_LIBADD = $(w32pth_res) @LTLIBOBJS@ $(NETLIBS) $(GPG_ERROR_LIBS)
+libw32pth_la_SOURCES = pth.h debug.h w32-pth.c w32-io.h w32-io.c utils.h
 
 
 install-data-local: install-def-file

@@ -26,8 +26,8 @@ min_automake_version="1.10"
 # Remember to change the version number immediately *after* a release.
 # Set my_issvn to "yes" for non-released code.  Remember to run an
 # "svn up" and "autogen.sh" right before creating a distribution.
-m4_define([my_version], [2.0.2])
-m4_define([my_issvn], [no])
+m4_define([my_version], [2.0.3])
+m4_define([my_issvn], [yes])
 
 m4_define([svn_revision], m4_esyscmd([echo -n $( (svn info 2>/dev/null \
           || echo 'Revision: 0')|sed -n '/^Revision:/ s/[^0-9]//gp'|head -1)]))
@@ -45,6 +45,8 @@ W32PTH_LT_REVISION=0
 #-------------------
 # If the API is changed in an incompatible way: increment the next counter.
 W32PTH_CONFIG_API_VERSION=1
+
+NEED_GPG_ERROR_VERSION=1.8
 
 BUILD_REVISION=svn_revision
 PACKAGE=$PACKAGE_NAME
@@ -71,10 +73,23 @@ AC_SUBST(VERSION)
 AC_DEFINE_UNQUOTED(PACKAGE, "$PACKAGE", [Name of this package])
 AC_DEFINE_UNQUOTED(VERSION, "$VERSION", [Version of this package])
 
+#
+# Initialize libtool
+#
+LT_PREREQ([2.2.6])
+LT_INIT([win32-dll disable-static])
+LT_LANG([Windows Resource])
+
+
 
 # Setup some stuff depending on host/target.
 have_w32_system=no
+have_w32ce_system=no
 case "${host}" in
+    *-mingw32ce*)
+        have_w32_system=yes
+        have_w32ce_system=yes
+        ;;
     *-*-mingw32*)
       have_w32_system=yes
       ;;
@@ -84,8 +99,13 @@ case "${host}" in
 esac
 if test "$have_w32_system" = yes; then
    AC_DEFINE(HAVE_W32_SYSTEM,1, [Defined if we run on a W32 API based system])
+   if test "$have_w32ce_system" = yes; then
+      AC_DEFINE(HAVE_W32CE_SYSTEM,1,[Defined if we run on WindowsCE])
+   fi
 fi
 AM_CONDITIONAL(HAVE_W32_SYSTEM, test "$have_w32_system" = yes)
+AM_CONDITIONAL(HAVE_W32CE_SYSTEM, test "$have_w32ce_system" = yes)
+
 
 # Checks for programs.
 missing_dir=`cd $ac_aux_dir && pwd`
@@ -106,9 +126,6 @@ AC_PROG_LN_S
 AC_PROG_MAKE_SET
 AC_C_INLINE
 
-LT_PREREQ([2.2.6])
-LT_INIT([win32-dll disable-static])
-LT_LANG([Windows Resource])
 
 if test "$GCC" = yes; then
     CFLAGS="$CFLAGS -Wall -Wcast-align -Wshadow -Wstrict-prototypes"
@@ -135,10 +152,32 @@ if test "$GCC" = yes; then
 
 fi
 
+#
+# On W32CE we need gpg-error because this provides our errno.h replacement.
+#
+if test "$have_w32ce_system" = yes; then
+  AM_PATH_GPG_ERROR("$NEED_GPG_ERROR_VERSION")
+  if test "x$GPG_ERROR_LIBS" = "x"; then
+    AC_MSG_ERROR([libgpg-error is needed for Windows CE.
+                  See ftp://ftp.gnupg.org/gcrypt/libgpg-error/ .])
+  fi
+fi
+
+
+#
+# Set NETLIBS
+#
+if test "$have_w32ce_system" = yes; then
+   NETLIBS="-lws2 $NETLIBS"
+else
+   NETLIBS="-lws2_32 $NETLIBS"
+fi
+AC_SUBST(NETLIBS)
+
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_HEADERS([string.h])
+AC_CHECK_HEADERS([string.h signal.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST

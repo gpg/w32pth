@@ -1,3 +1,35 @@
+2010-02-25  Werner Koch  <wk@g10code.com>
+
+	* utils.h: New.
+	(set_errno): New.  Always use it to change ERRNO.
+	* w32-io.c (pth_pipe) [W32CE]: Take care of handles being global.
+	(create_pipe): New.  Taken from libassuan.
+	(pth_pipe): Use it.
+
+	* w32-pth.c: Include utils.h.
+	[!HAVE_SIGNAL_H]: Don't include signal.h.
+	(w32_read_registry, getenv) [W32CE]: New.
+	(destroy_timer): New.
+	(do_pth_event_free): Use it instead of a CloseHandle.
+	(w32ce_timer_thread): New.
+	(create_timer) [W32CE]: Add CE implementation.
+	(do_pth_wait) <PTH_EVENT_TIME>: Move timer setting to ...
+	(set_timer): New.  Add code for W32CE.
+	(w32_strerror, wsa_strerror) [W32CE]: Do not use FormatMessage.
+	(create_event) [W32CE]: Don't set to synchronize.
+
+	* Makefile.am (libw32pth_la_LIBADD): Use NETLIBS.
+	* configure.ac [W32CE]: Require gpg-error.
+	(NETLIBS): New.
+	* configure.ac: Test for signal.h.
+
+2010-02-24  Werner Koch  <wk@g10code.com>
+
+	* ltmain.sh (wrappers_required): Don't set for mingw32ce.
+	* ltmain.sh: Updated.
+
+	* autogen.sh: Modernized.
+
 2009-12-08  Marcus Brinkmann  <marcus@g10code.de>
 
 	* libw32pth.def: Add pth_cancel.
@@ -21,11 +53,11 @@
 	(w32pth_la_LDFLAGS): Remove w32pth_res_ldflag usage.
 	(w32pth_la_LIBADD): Add w32pth_res.
 	* depcomp, compile, INSTALL, missing: Update from automake 1.10.
-	
+
 2008-10-17  Marcus Brinkmann  <marcus@g10code.com>
 
 	Released 2.0.2.
-	
+
 	* configure.ac (W32PTH_LT_CURRENT, W32PTH_LT_AGE): Bump.
 	(W32PTH_LT_REVISION): Reset.
 
@@ -50,7 +82,7 @@
 2008-05-27  Werner Koch  <wk@g10code.com>
 
 	* w32-pth.c (_pth_malloc, _pth_calloc, _pth_free): New.  Always
-	use these wrappers to be prepared to change the allocators. 
+	use these wrappers to be prepared to change the allocators.
 
 2008-05-26  Werner Koch  <wk@g10code.com>
 
@@ -60,7 +92,7 @@
 	* w32-pth.c (pth_thread_id): New.
 
 	* libw32pth.def (pth_thread_id): New.
-	
+
 2008-03-25  Marcus Brinkmann  <marcus@g10code.de>
 
 	* debug.h (DEBUG_INFO, DEBUG_CALLS): New macros.
@@ -146,11 +178,11 @@
 
 2007-07-05  Werner Koch  <wk@g10code.com>
 
-	Released 2.0.0 (first release). 
+	Released 2.0.0 (first release).
 
 2007-07-04  Werner Koch  <wk@g10code.com>
 
-	* w32-pth.c: Major rewrite of the event stuff. 
+	* w32-pth.c: Major rewrite of the event stuff.
 
 2007-07-03  Werner Koch  <wk@g10code.com>
 
@@ -189,8 +221,8 @@
 	Package created.
 	* w32-pth.c, w32-pth.h: Taken from GnuPG 2.0.4
 
-	
- Copyright 2007 g10 Code GmbH
+
+ Copyright 2007, 2010 g10 Code GmbH
 
  This file is free software; as a special exception the author gives
  unlimited permission to copy and/or distribute it, with or without

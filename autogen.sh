@@ -35,10 +35,26 @@ if test x"$1" = x"--force"; then
   shift
 fi
 
+# Convenience option to use certain configure options for some hosts.
+myhost="" 
+myhostsub=""
+case "$1" in
+    --build-w32)
+        myhost="w32"
+        ;;
+    --build-w32ce)
+        myhost="w32"
+        myhostsub="ce"
+        ;;
+    *)
+     ;;
+esac
+
+
 
 # ***** W32 build script *******
 # Used to cross-compile for Windows.
-if test "$1" = "--build-w32"; then
+if [ "$myhost" = "w32" ]; then
     tmp=`dirname $0`
     tsdir=`cd "$tmp"; pwd`
     shift
@@ -48,11 +64,22 @@ if test "$1" = "--build-w32"; then
     fi
     build=`$tsdir/config.guess`
 
-    [ -z "$w32root" ] && w32root="$HOME/w32root"
+    case $myhostsub in
+        ce)
+          [ -z "$w32root" ] && w32root="$HOME/w32ce_root"
+          toolprefixes="arm-mingw32ce"
+          extra_options="--with-gpg-error-prefix=${w32root}"
+          ;;
+        *)
+          [ -z "$w32root" ] && w32root="$HOME/w32root"
+          toolprefixes="i586-mingw32msvc i386-mingw32msvc"
+          extra_options=""
+          ;;
+    esac
     echo "Using $w32root as standard install directory" >&2
     
     crossbindir=
-    for host in i586-mingw32msvc i386-mingw32msvc mingw32; do
+    for host in $toolprefixes; do
         if ${host}-gcc --version >/dev/null 2>&1 ; then
             crossbindir=/usr/${host}/bin
             conf_CC="CC=${host}-gcc"
@@ -61,8 +88,10 @@ if test "$1" = "--build-w32"; then
     done
     if [ -z "$crossbindir" ]; then
         echo "Cross compiler kit not installed" >&2
-        echo "Under Debian GNU/Linux, you may install it using" >&2
-        echo "  apt-get install mingw32 mingw32-runtime mingw32-binutils" >&2 
+        if [ -z "$sub" ]; then 
+          echo "Under Debian GNU/Linux, you may install it using" >&2
+          echo "  apt-get install mingw32 mingw32-runtime mingw32-binutils" >&2 
+        fi
         echo "Stop." >&2
         exit 1
     fi
@@ -76,7 +105,7 @@ if test "$1" = "--build-w32"; then
     fi
 
     ./configure --enable-maintainer-mode  --prefix=${w32root}  \
-            --host=${host} --build=${build} "$@"
+            --host=${host} --build=${build} ${extra_options} "$@"
 
     exit $?
 fi
@@ -140,8 +169,8 @@ EOF
     exit 1
 fi
 
-echo "Running aclocal ${ACLOCAL_FLAGS:+$ACLOCAL_FLAGS }..."
-$ACLOCAL  $ACLOCAL_FLAGS
+echo "Running aclocal -I m4 ${ACLOCAL_FLAGS:+$ACLOCAL_FLAGS }..."
+$ACLOCAL -I m4  $ACLOCAL_FLAGS
 echo "Running autoheader..."
 $AUTOHEADER
 echo "Running automake --gnu ..."
@@ -149,4 +178,6 @@ $AUTOMAKE --gnu;
 echo "Running autoconf${FORCE} ..."
 $AUTOCONF${FORCE}
 
-echo "You may now run \"./autogen.sh --build-w32 && make\"."
+echo "You may now run 
+  ./autogen.sh --build-w32 && make
+"
