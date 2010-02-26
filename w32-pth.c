@@ -510,7 +510,7 @@ reset_event (HANDLE h)
 static DWORD CALLBACK 
 w32ce_timer_thread (void *arg)
 {
-  int idx;
+  int idx, any;
   DWORD timeout, elapsed, lasttick;
 
   (void)arg;
@@ -521,28 +521,31 @@ w32ce_timer_thread (void *arg)
       elapsed = lasttick;  /* Get start time.  */
       timeout = 0;
       EnterCriticalSection (&w32ce_timer_cs);
-      for (idx=0; idx < DIM (w32ce_timer); idx++)
+      for (idx=any=0; idx < DIM (w32ce_timer); idx++)
         {
-          if (w32ce_timer[idx].event && w32ce_timer[idx].active
-              && w32ce_timer[idx].remaining > timeout)
-            timeout = w32ce_timer[idx].remaining;
+          if (w32ce_timer[idx].event && w32ce_timer[idx].active)
+            {
+              any = 1;
+              if (w32ce_timer[idx].remaining > timeout)
+                timeout = w32ce_timer[idx].remaining;
+            }
         }
       LeaveCriticalSection (&w32ce_timer_cs);
-      if (timeout > 0x7fffffff)
+      if (!any)
+        timeout = INFINITE;
+      else if (timeout > 0x7fffffff)
         timeout = 0x7fffffff;
       switch (WaitForSingleObject (w32ce_timer_ev, (DWORD)timeout))
         {
         case WAIT_OBJECT_0:
-          break;
         case WAIT_TIMEOUT:
           break;
-        case WAIT_FAILED:
+        default:
           if (DBG_ERROR)
             fprintf (dbgfp, 
                      "%s:w32ce_timer_thread: WFSO failed: rc=%d\n",
                      log_get_prefix (NULL), (int)GetLastError ());
-          /* This is likely to happen if a handle has been closed
-             while we are waiting for it.  */
+          Sleep (500); /* Failsafe pause. */
           break;
         }
       EnterCriticalSection (&w32ce_timer_cs);
