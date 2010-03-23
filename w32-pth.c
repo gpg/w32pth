@@ -1612,7 +1612,7 @@ pth_self (void)
 
 
 /* Special W32 function to cope with the problem that pth_self returns
-   just a pseudo handle which is not very usefule for debugging.  */
+   just a pseudo handle which is not very useful for debugging.  */
 unsigned long 
 pth_thread_id (void)
 {

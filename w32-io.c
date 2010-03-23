@@ -32,12 +32,14 @@
 #ifdef HAVE_W32CE_SYSTEM
 # include <winioctl.h>
 # include <devload.h>
-# define GPGCEDEV_IOCTL_SET_HANDLE                                      \
+# define GPGCEDEV_IOCTL_GET_RVID                                         \
   CTL_CODE (FILE_DEVICE_STREAMS, 2048, METHOD_BUFFERED, FILE_ANY_ACCESS)
 # define GPGCEDEV_IOCTL_MAKE_PIPE                                        \
   CTL_CODE (FILE_DEVICE_STREAMS, 2049, METHOD_BUFFERED, FILE_ANY_ACCESS)
-#endif /*HAVE_W32CE_SYSTEM*/
 
+#warning fixme pth_pipe is not correct - only used in dirmngr - remove it?
+
+#endif /*HAVE_W32CE_SYSTEM*/
 
 
 #include "utils.h"
@@ -941,62 +943,62 @@ create_pipe (HANDLE *read_hd, HANDLE *write_hd,
              LPSECURITY_ATTRIBUTES sec_attr, DWORD size)
 {
 #ifdef HAVE_W32CE_SYSTEM
-  HANDLE hd[2] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
+  HANDLE hd[2];
+  LONG rvid;
   TRACE_BEG (DEBUG_SYSIO, "pth:create_pipe", read_hd);
 
   *read_hd = *write_hd = INVALID_HANDLE_VALUE;
 
   ActivateDevice (L"Drivers\\GnuPG_Device", 0);
 
-  /* Note: Using "\\$device\\GPG1" should be identical to "GPG1:".
-     However this returns an invalid parameter error without having
-     called GPG_Init in the driver.  The docs mention something about
-     RegisterAFXEx but that API is not documented.  */
   hd[0] = CreateFile (L"GPG1:", GENERIC_READ,
-                      FILE_SHARE_READ | FILE_SHARE_WRITE,
-                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                   FILE_SHARE_READ | FILE_SHARE_WRITE,
+                   NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
   if (hd[0] == INVALID_HANDLE_VALUE)
-    return 0;
+    {
+      DWORD lastrc = GetLastError ();
+      TRACE_LOG1 ("CreateFile(\"GPG1:\", READ) failed: %d\n", lastrc);
+      SetLastError (lastrc);
+      return 0;
+    }
 
-  if (!DeviceIoControl (hd[0], GPGCEDEV_IOCTL_SET_HANDLE,
-                        &hd[0], sizeof hd[0], NULL, 0, NULL, NULL))
-    TRACE_LOG1 ("GPGCEDEV_IOCTL_SET_HANDLE(0) failed: %d\n", 
-                (int)GetLastError ());
-  
+  if (!DeviceIoControl (hd[0], GPGCEDEV_IOCTL_GET_RVID,
+                        NULL, 0, &rvid, sizeof rvid, NULL, NULL))
+    {
+      DWORD lastrc = GetLastError ();
+      TRACE_LOG1 ("GPGCEDEV_IOCTL_GET_RVID failed: %d\n", lastrc);
+      CloseHandle (hd[0]);
+      SetLastError (lastrc);
+      return 0;
+    }
+
   hd[1] = CreateFile (L"GPG1:", GENERIC_WRITE,
                       FILE_SHARE_READ | FILE_SHARE_WRITE,
                       NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL,NULL);
   if (hd[1] == INVALID_HANDLE_VALUE)
     {
-      DWORD lasterr = GetLastError ();
+      DWORD lastrc = GetLastError ();
+      TRACE_LOG1 ("CreateFile(\"GPG1:\", WRITE) failed: %d\n", lastrc);
       CloseHandle (hd[0]);
-      SetLastError (lasterr);
+      SetLastError (lastrc);
       return 0;
     }
-  if (!DeviceIoControl (hd[1], GPGCEDEV_IOCTL_SET_HANDLE,
-                        &hd[1], sizeof hd[1], NULL, 0, NULL, NULL))
-    TRACE_LOG1 ("GPGCEDEV_IOCTL_SET_HANDLE(1) failed: %d\n", 
-                (int)GetLastError ());
-
-  if (!DeviceIoControl (hd[0], GPGCEDEV_IOCTL_MAKE_PIPE,
-                        &hd[1], sizeof hd[1], NULL, 0, NULL, NULL))
+  
+  if (!DeviceIoControl (hd, GPGCEDEV_IOCTL_MAKE_PIPE,
+                        &rvid, sizeof rvid, NULL, 0, NULL, NULL))
     {
-      TRACE_LOG1 ("GPGCEDEV_IOCTL_MAKE_PIPE failed: %d\n", 
-                  (int)GetLastError ());
-      if (hd[0] != INVALID_HANDLE_VALUE)
-        CloseHandle (hd[0]);
-      if (hd[1] != INVALID_HANDLE_VALUE)
-        CloseHandle (hd[1]);
-      TRACE_SUC ();
+      DWORD lastrc = GetLastError ();
+      TRACE_LOG1 ("GPGCEDEV_IOCTL_MAKE_PIPE failed: %d\n", lastrc);
+      CloseHandle (hd[0]);
+      CloseHandle (hd[1]);
+      SetLastError (lastrc);
       return 0;
     }
-  else
-    {
-      *read_hd = hd[0];
-      *write_hd = hd[1];
-      TRACE_SUC ();
-      return 1;
-    }
+  
+  *read_hd = hd[0];
+  *write_hd = hd[1];
+  TRACE_SUC ();
+  return 1;
 #else /*!HAVE_W32CE_SYSTEM*/
   return CreatePipe (read_hd, write_hd, sec_attr, size);
 #endif /*!HAVE_W32CE_SYSTEM*/

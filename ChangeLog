@@ -1,3 +1,7 @@
+2010-03-23  Werner Koch  <wk@g10code.com>
+
+	* w32-io.c (create_pipe) [W32CE]: Change to new driver semantics.
+
 2010-02-26  Werner Koch  <wk@g10code.com>
 
 	* w32-pth.c (w32ce_timer_thread): Take care of an empty timer
