@@ -352,6 +352,19 @@ reader (void *arg)
 	      ctx->eof = 1;
 	      TRACE_LOG ("got EOF (broken pipe)");
             }
+#ifdef HAVE_W32CE_SYSTEM
+	  else if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
+                   || ctx->error_code == ERROR_BUSY)
+	    {
+              /* This may happen while one pipe end is still dangling
+                 because the child process has not yet completed the
+                 pipe creation.  ERROR_BUSY has been seen as well, it
+                 is propabaly returned by the device manager.  */
+              ctx->error_code = 0;
+              Sleep (100);
+              continue;
+            }
+#endif
 	  else
 	    {
 	      ctx->error = 1;
@@ -673,6 +686,19 @@ writer (void *arg)
 		      ctx->nbytes, &nwritten, NULL))
 	{
 	  ctx->error_code = (int) GetLastError ();
+#ifdef HAVE_W32CE_SYSTEM
+	  if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
+              || ctx->error_code == ERROR_BUSY)
+	    {
+              /* This may happen while one pipe end is still dangling
+                 because the child process has not yet completed the
+                 pipe creation.  ERROR_BUSY has been seen as well, it
+                 is propabaly returned by the device manager. */
+              ctx->error_code = 0;
+              Sleep (100);
+              continue;
+            }
+#endif
 	  ctx->error = 1;
 	  TRACE_LOG1 ("write error: ec=%d", ctx->error_code);
 	  break;

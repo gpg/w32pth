@@ -885,6 +885,27 @@ pth_timeout (long sec, long usec)
 
 
 static int
+pipe_is_not_connected (void)
+{  
+#ifdef HAVE_W32CE_SYSTEM
+  switch (GetLastError ())
+    {
+    case ERROR_PIPE_NOT_CONNECTED:
+      /* This may happen while one pipe end is still dangling
+         because the child process has not yet completed the
+         pipe creation.  */
+    case ERROR_BUSY:
+      /* Returned by the device manager? */
+      Sleep (100);
+      return 1;
+
+    }
+#endif
+  return 0;
+}
+
+
+static int
 do_pth_read (int fd,  void * buffer, size_t size)
 {
   int n;
@@ -901,13 +922,16 @@ do_pth_read (int fd,  void * buffer, size_t size)
       if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
 	{
 	  DWORD nread = 0;
-	  n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
+
+          do
+            n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
+          while (!n && pipe_is_not_connected ());
 	  if (!n)
 	    {
 	      char strerr[256];
 	      
 	      if (DBG_ERROR)
-		fprintf (dbgfp, "%s: pth_read(%d) failed read from file: %s\n",
+		fprintf (dbgfp, "%s: pth_read(0x%x) ReadFile failed: %s\n",
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
 	      n = -1;
@@ -1014,7 +1038,7 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	      n = -1;
 	      set_errno (map_w32_to_errno (GetLastError ()));
 	      if (DBG_ERROR)
-		fprintf (dbgfp, "%s: pth_write(%d) failed in write: %s\n",
+		fprintf (dbgfp, "%s: pth_write(0x%x) failed in write: %s\n",
 			 log_get_prefix (NULL), fd,
 			 w32_strerror (strerr, sizeof strerr));
 	    }
@@ -1623,6 +1647,7 @@ pth_thread_id (void)
 int
 pth_join (pth_t hd, void **value)
 {
+#warning fixme: We need to implement this.
   return TRUE;
 }
 

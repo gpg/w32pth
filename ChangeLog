@@ -1,3 +1,8 @@
+2010-04-08  Werner Koch  <wk@g10code.com>
+
+	* w32-io.c (reader, writer) [W32CE]: Take care of
+	ERROR_PIPE_NOT_CONNECTED.
+
 2010-03-23  Werner Koch  <wk@g10code.com>
 
 	* w32-io.c (create_pipe) [W32CE]: Change to new driver semantics.
