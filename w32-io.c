@@ -306,14 +306,50 @@ set_synchronize (HANDLE hd)
 }
 
 
+/* Return true if HD refers to a socket.  */
+static int
+is_socket (HANDLE hd)
+{
+#ifdef HAVE_W32CE_SYSTEM
+  (void)hd;
+  return 0;
+#else
+  /* We need to figure out whether we are working on a socket or on a
+     handle.  A trivial way would be to check for the return code of
+     recv and see if it is WSAENOTSOCK.  However the recv may block
+     after the server process died and thus the destroy_reader will
+     hang.  Another option is to use getsockopt to test whether it is
+     a socket.  The bug here is that once a socket with a certain
+     values has been opened, closed and later a CreatePipe returned
+     the same value (i.e. handle), getsockopt still believes it is a
+     socket.  What we do now is to use a combination of GetFileType
+     and GetNamedPipeInfo.  The specs say that the latter may be used
+     on anonymous pipes as well.  Note that there are claims that
+     since winsocket version 2 ReadFile may be used on a socket but
+     only if it is supported by the service provider.  Tests on a
+     stock XP using a local TCP socket show that it does not work.  */
+  DWORD dummyflags, dummyoutsize, dummyinsize, dummyinst;
+  if (GetFileType (hd) == FILE_TYPE_PIPE
+      && !GetNamedPipeInfo (hd, &dummyflags, &dummyoutsize,
+                            &dummyinsize, &dummyinst))
+    return 1; /* Function failed; thus we assume it is a socket.  */
+  else
+    return 0; /* Success; this is not a socket.  */
+#endif
+}
+
+
 static DWORD CALLBACK 
 reader (void *arg)
 {
   struct reader_context_s *ctx = arg;
   int nbytes;
   DWORD nread;
+  int sock;
   TRACE_BEG1 (DEBUG_SYSIO, "pth:reader", ctx->file_hd,
 	      "thread=%p", ctx->thread_hd);
+
+  sock = is_socket (ctx->file_hd);
 
   for (;;)
     {
@@ -342,35 +378,62 @@ reader (void *arg)
 	nbytes = READBUF_SIZE - ctx->writepos;
       UNLOCK (ctx->mutex);
       
-      TRACE_LOG1 ("reading %d bytes", nbytes);
-      if (!ReadFile (ctx->file_hd,
-		     ctx->buffer + ctx->writepos, nbytes, &nread, NULL))
-	{
-	  ctx->error_code = (int) GetLastError ();
-	  if (ctx->error_code == ERROR_BROKEN_PIPE)
-	    {
-	      ctx->eof = 1;
-	      TRACE_LOG ("got EOF (broken pipe)");
+      TRACE_LOG2 ("%s %d bytes", sock? "receiving":"reading", nbytes);
+
+      if (sock)
+        {
+          int n;
+
+          n = recv ((int)ctx->file_hd,
+                    ctx->buffer + ctx->writepos, nbytes, 0);
+          if (n < 0)
+            {
+              ctx->error_code = (int) WSAGetLastError ();
+              if (ctx->error_code == ERROR_BROKEN_PIPE)
+                {
+                  ctx->eof = 1;
+                  TRACE_LOG ("got EOF (broken connection)");
+                }
+              else
+                {
+                  ctx->error = 1;
+                  TRACE_LOG1 ("recv error: ec=%d", ctx->error_code);
+                }
+              break;
             }
+          nread = n;
+        }
+      else
+        {
+          if (!ReadFile (ctx->file_hd,
+                         ctx->buffer + ctx->writepos, nbytes, &nread, NULL))
+            {
+              ctx->error_code = (int) GetLastError ();
+              if (ctx->error_code == ERROR_BROKEN_PIPE)
+                {
+                  ctx->eof = 1;
+                  TRACE_LOG ("got EOF (broken pipe)");
+                }
 #ifdef HAVE_W32CE_SYSTEM
-	  else if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
-                   || ctx->error_code == ERROR_BUSY)
-	    {
-              /* This may happen while one pipe end is still dangling
-                 because the child process has not yet completed the
-                 pipe creation.  ERROR_BUSY has been seen as well, it
-                 is propabaly returned by the device manager.  */
-              ctx->error_code = 0;
-              Sleep (100);
-              continue;
-            }
+              else if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
+                       || ctx->error_code == ERROR_BUSY)
+                {
+                  /* This may happen while one pipe end is still dangling
+                     because the child process has not yet completed the
+                     pipe creation.  ERROR_BUSY has been seen as well, it
+                     is propabaly returned by the device manager.  */
+                  ctx->error_code = 0;
+                  Sleep (100);
+                  continue;
+                }
 #endif
-	  else
-	    {
-	      ctx->error = 1;
-	      TRACE_LOG1 ("read error: ec=%d", ctx->error_code);
+              else
+                {
+                  ctx->error = 1;
+                  TRACE_LOG1 ("read error: ec=%d", ctx->error_code);
+                }
+              break;
             }
-	  break;
         }
       if (!nread)
 	{
@@ -648,8 +711,11 @@ writer (void *arg)
 {
   struct writer_context_s *ctx = arg;
   DWORD nwritten;
+  int sock;
   TRACE_BEG1 (DEBUG_SYSIO, "pth:writer", ctx->file_hd,
 	      "thread=%p", ctx->thread_hd);
+
+  sock = is_socket (ctx->file_hd);
 
   for (;;)
     {
@@ -678,30 +744,52 @@ writer (void *arg)
         }
       UNLOCK (ctx->mutex);
       
-      TRACE_LOG1 ("writing %d bytes", ctx->nbytes);
+      TRACE_LOG2 ("%s %d bytes", sock?"sending":"writing", ctx->nbytes);
+ 
       /* Note that CTX->nbytes is not zero at this point, because
 	 _pth_io_write always writes at least 1 byte before waking
 	 us up, unless CTX->stop_me is true, which we catch above.  */
-      if (!WriteFile (ctx->file_hd, ctx->buffer,
-		      ctx->nbytes, &nwritten, NULL))
-	{
-	  ctx->error_code = (int) GetLastError ();
-#ifdef HAVE_W32CE_SYSTEM
-	  if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
-              || ctx->error_code == ERROR_BUSY)
-	    {
-              /* This may happen while one pipe end is still dangling
-                 because the child process has not yet completed the
-                 pipe creation.  ERROR_BUSY has been seen as well, it
-                 is propabaly returned by the device manager. */
-              ctx->error_code = 0;
-              Sleep (100);
-              continue;
+      if (sock)
+        {
+          /* We need to try send first because a socket handle can't
+             be used with WriteFile.  */
+          int n;
+          
+          n = send ((int)ctx->file_hd,
+                    ctx->buffer, ctx->nbytes, 0);
+          if (n < 0)
+            {
+              ctx->error_code = (int) WSAGetLastError ();
+              ctx->error = 1;
+              TRACE_LOG1 ("send error: ec=%d", ctx->error_code);
+              break;
             }
+          nwritten = n;
+        }
+      else
+        {
+          if (!WriteFile (ctx->file_hd, ctx->buffer,
+                          ctx->nbytes, &nwritten, NULL))
+            {
+              ctx->error_code = (int) GetLastError ();
+#ifdef HAVE_W32CE_SYSTEM
+              if (ctx->error_code == ERROR_PIPE_NOT_CONNECTED
+                  || ctx->error_code == ERROR_BUSY)
+                {
+                  /* This may happen while one pipe end is still
+                     dangling because the child process has not yet
+                     completed the pipe creation.  ERROR_BUSY has been
+                     seen as well, it is propabaly returned by the
+                     device manager. */
+                  ctx->error_code = 0;
+                  Sleep (100);
+                  continue;
+                }
 #endif
-	  ctx->error = 1;
-	  TRACE_LOG1 ("write error: ec=%d", ctx->error_code);
-	  break;
+              ctx->error = 1;
+              TRACE_LOG1 ("write error: ec=%d", ctx->error_code);
+              break;
+            }
 	}
       TRACE_LOG1 ("wrote %d bytes", (int) nwritten);
       

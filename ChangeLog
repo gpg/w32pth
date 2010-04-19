@@ -1,3 +1,11 @@
+2010-04-19  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c (is_socket_2): New.
+	(do_pth_read, do_pth_write): Use is_socket_2.
+
+	* w32-io.c (is_socket): New.
+	(reader, writer): Use is_socket.
+
 2010-04-08  Werner Koch  <wk@g10code.com>
 
 	* w32-io.c (reader, writer) [W32CE]: Take care of
