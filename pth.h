@@ -277,6 +277,9 @@ int pth_sigmask (int how, const sigset_t *set, sigset_t *old);
 
 int pth_yield (pth_t tid);
 
+void pth_enter (void);
+void pth_leave (void);
+
 
 /* Special W32 function to cope with the problem that pth_self returns
    just a pseudo handle which is not very useful for debugging.  */

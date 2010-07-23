@@ -76,6 +76,9 @@ static HANDLE pth_signo_ev;
 /* Mutex to make sure only one thread is running. */
 static CRITICAL_SECTION pth_shd;
 
+/* A sentinel to catch bogus use of pth_enter/pth_leave.  */
+static int enter_leave_api_sentinel;
+
 /* Counter to track the number of PTH threads.  */
 static int thread_counter;
 
@@ -762,7 +765,7 @@ pth_init (void)
   if (!dbgfp)
     dbgfp = stderr;
   if (debug_level)
-    _pth_debug (DEBUG_ERROR, "pth_init called\n");
+    _pth_debug (DEBUG_ERROR, "pth_init called (level=%d)\n", debug_level);
 
   if (WSAStartup (0x202, &wsadat))
     return FALSE;
@@ -829,6 +832,33 @@ leave_pth (const char *function)
   EnterCriticalSection (&pth_shd);
   if (DBG_CALLS)
     _pth_debug (DEBUG_CALLS, "leave_pth (%s)\n", function? function:"");
+}
+
+
+void
+pth_enter (void)
+{
+  implicit_init ();
+  if (enter_leave_api_sentinel)
+    {
+      fprintf (stderr, "pth_enter called while already in pth\n");
+      abort ();
+    }
+  enter_leave_api_sentinel++;
+  enter_pth (__FUNCTION__);
+}
+
+
+void
+pth_leave (void)
+{
+  leave_pth (__FUNCTION__);
+  if (enter_leave_api_sentinel != 1)
+    {
+      fprintf (stderr, "pth_leave was called while not in pth\n");
+      abort ();
+    }
+  enter_leave_api_sentinel--;
 }
 
 
@@ -945,6 +975,8 @@ do_pth_read (int fd,  void * buffer, size_t size)
   HANDLE hd;
   int use_readfile = 0;
 
+  TRACE_BEG (DEBUG_INFO, "do_pth_read", fd);
+
   /* We have to check for internal pipes first, as socket operations
      can block on these.  */
   hd = _pth_get_reader_ev (fd);
@@ -970,7 +1002,12 @@ do_pth_read (int fd,  void * buffer, size_t size)
 	  DWORD nread = 0;
 
           do
-            n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
+            {
+
+              TRACE_LOG2 ("  ReadFile on %p size=%d", (HANDLE)fd, (int)size);
+              n = ReadFile ((HANDLE)fd, buffer, size, &nread, NULL);
+              TRACE_LOG2 ("           n=%d nread=%d", n, (int)nread);
+            }
           while (!n && pipe_is_not_connected ());
 	  if (!n)
 	    {
@@ -995,6 +1032,7 @@ do_pth_read (int fd,  void * buffer, size_t size)
         }
     }
 
+  TRACE_SYSRES (n);
   return n;
 }
 
