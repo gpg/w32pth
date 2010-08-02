@@ -26,7 +26,7 @@ min_automake_version="1.10"
 # Remember to change the version number immediately *after* a release.
 # Set my_issvn to "yes" for non-released code.  Remember to run an
 # "svn up" and "autogen.sh" right before creating a distribution.
-m4_define([my_version], [2.0.3])
+m4_define([my_version], [2.0.4])
 m4_define([my_issvn], [no])
 
 m4_define([svn_revision], m4_esyscmd([echo -n $( (svn info 2>/dev/null \
@@ -41,7 +41,7 @@ AC_INIT([w32pth], my_version[]m4_if(my_issvn,[yes],[-svn[]svn_revision]),
 # Please remember to document interface changes in the NEWS file.
 W32PTH_LT_CURRENT=2
 W32PTH_LT_AGE=2
-W32PTH_LT_REVISION=0
+W32PTH_LT_REVISION=1
 #-------------------
 # If the API is changed in an incompatible way: increment the next counter.
 W32PTH_CONFIG_API_VERSION=1

@@ -76,3 +76,6 @@ EXPORTS
 
       pth_cancel @44
 
+      pth_enter @45
+      pth_leave @46
+
