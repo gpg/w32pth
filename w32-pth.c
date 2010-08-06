@@ -688,8 +688,12 @@ set_timer (HANDLE hd, DWORD milliseconds)
 #else /* Plain Windows.  */
   LARGE_INTEGER ll;
   char strerr[256];
+
+  if (DBG_CALLS)
+    _pth_debug (DEBUG_CALLS, "set_timer hd=%p ms=%lu\n", 
+                hd, (unsigned long)milliseconds);
   
-  ll.QuadPart = - (milliseconds * 10000);
+  ll.QuadPart = ((unsigned long)milliseconds * ((long long)-10000LL));
   if (!SetWaitableTimer (hd, &ll, 0, NULL, NULL, FALSE))
     {
       if (DBG_ERROR)
