@@ -163,6 +163,11 @@ if test "$have_w32ce_system" = yes; then
   fi
 fi
 
+AH_BOTTOM([
+/* Under WindowsCE we need gpg-error's strerror macro.  */
+#define GPG_ERR_ENABLE_ERRNO_MACROS 1
+])
+
 
 #
 # Set NETLIBS
