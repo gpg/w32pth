@@ -180,10 +180,32 @@ _pth_debug (int level, const char *format, ...)
 
   if (debug_level < level)
     return;
-    
+
+#ifdef HAVE_W32CE_SYSTEM
+  if (dbghd)
+    {
+      LOCK (debug_lock);
+      va_start (arg_ptr, format);
+      {
+        char buffer[256];
+        DWORD n, nwritten;
+        
+        _snprintf (buffer, 30, "%lu/w32pth: ", 
+                   (unsigned long)GetCurrentThreadId ());
+        buffer[29] = 0;
+        n = strlen (buffer);
+        _vsnprintf (buffer + n, sizeof buffer - n, format, arg_ptr);
+        buffer[sizeof buffer - 1] = 0;
+        n = strlen (buffer);
+        WriteFile (dbghd, buffer, n, &nwritten, NULL);
+      }
+      va_end (arg_ptr);
+      UNLOCK (debug_lock);
+    }
+#else    
   va_start (arg_ptr, format);
   LOCK (debug_lock);
-  fprintf (dbgfp, "%05lu/%lu.%lu/libw32pth: ", 
+  fprintf (dbgfp, "%05lu/%lu.%lu/w32pth: ", 
            ((unsigned long)GetTickCount () % 100000),
            (unsigned long)GetCurrentProcessId (),
            (unsigned long)GetCurrentThreadId ());
@@ -193,7 +215,7 @@ _pth_debug (int level, const char *format, ...)
     putc ('\n', dbgfp);
   UNLOCK (debug_lock);
   fflush (dbgfp);
-
+#endif
   set_errno (saved_errno);
 }
 

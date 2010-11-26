@@ -26,7 +26,11 @@
 
 /* Keeps the current debug level. Define marcos to test them. */
 extern int debug_level;
+#ifdef HAVE_W32CE_SYSTEM
+extern HANDLE dbghd;
+#else
 extern FILE *dbgfp;
+#endif
 #define DBG_ERROR  (debug_level >= 1)
 #define DBG_INFO   (debug_level >= 2)
 #define DBG_CALLS  (debug_level >= 3)

@@ -1,3 +1,13 @@
+2010-11-26  Werner Koch  <wk@g10code.com>
+
+	* w32-pth.c: Repalce all fprintf to DBGFP my _pth-debug calls.
+	(pth_init): Ignore a debug-level of 0.
+	(pth_init) [W32CE]: Open the GPG2 device.
+	(log_get_prefix): Remove.  Change all callers.
+	(do_pth_write): Instrument with trace calls.
+	* w32-io.c (_pth_debug) [W32CE]: Use the GPG2 device.
+	* debug.h (dbghd) [W32CE]: New.
+
 2010-09-01  Marcus Brinkmann  <marcus@g10code.de>
 
 	* configure.ac: Define GPG_ERR_ENABLE_ERRNO_MACROS.

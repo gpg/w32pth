@@ -67,7 +67,11 @@ static int pth_initialized;
 
 /* Debug helpers.  */
 int debug_level;
+#ifdef HAVE_W32CE_SYSTEM
+HANDLE dbghd = INVALID_HANDLE_VALUE;
+#else
 FILE *dbgfp;
+#endif
 
 /* Variables to support event handling. */
 static int pth_signo;
@@ -173,14 +177,6 @@ static int do_pth_event_free (pth_event_t ev, int mode);
 
 
 
-
-static const char *
-log_get_prefix (const void *dummy)
-{
-  return "libw32pth";
-}
-
-
 /* Our own malloc function.  Eventually we will use HeapCreate to use
    a private heap here.  */
 void *
@@ -221,14 +217,20 @@ w32_read_registry (const wchar_t *dir, const wchar_t *name)
   char *result = NULL;
   
   if (RegOpenKeyEx (HKEY_LOCAL_MACHINE, dir, 0, KEY_READ, &handle))
-    return NULL; /* No need for a RegClose, so return immediately. */
+    {
+      return NULL; /* No need for a RegClose, so return immediately. */
+    }
 
   nbytes = 1;
   if (RegQueryValueEx (handle, name, 0, NULL, NULL, &nbytes))
-    goto leave;
+    {
+      goto leave;
+    }
   buffer = malloc ((n=nbytes+2));
   if (!buffer)
-    goto leave;
+    {
+      goto leave;
+    }
   if (RegQueryValueEx (handle, name, 0, NULL, (PBYTE)buffer, &n))
     {
       free (buffer);
@@ -238,10 +240,14 @@ w32_read_registry (const wchar_t *dir, const wchar_t *name)
   
   n = WideCharToMultiByte (CP_UTF8, 0, buffer, nbytes, NULL, 0, NULL, NULL);
   if (n < 0 || (n+1) <= 0)
-    goto leave;
+    {
+      goto leave;
+    }
   result = malloc (n+1);
   if (!result)
-    goto leave;
+    {
+      goto leave;
+    }
   n = WideCharToMultiByte (CP_UTF8, 0, buffer, nbytes, result, n, NULL, NULL);
   if (n < 0)
     {
@@ -411,8 +417,8 @@ fd_is_socket (int fd)
     }
 
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: fd_is_socket: fd %i is a %s.\n",
-	     log_get_prefix (NULL), fd, is_socket ? "socket" : "file");
+    _pth_debug (0, "fd_is_socket: fd %i is a %s.\n",
+                fd, is_socket ? "socket" : "file");
 
   return is_socket;
 }
@@ -434,9 +440,8 @@ create_event (void)
   if (!h)
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: CreateEvent failed: %s\n",
-                 log_get_prefix (NULL), 
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0, "CreateEvent failed: %s\n",
+                    w32_strerror (strerr, sizeof strerr));
       return NULL;
     }
 #ifdef HAVE_W32CE_SYSTEM
@@ -447,10 +452,8 @@ create_event (void)
                         EVENT_MODIFY_STATE|SYNCHRONIZE, FALSE, 0 ) ) 
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: "
-                 "setting synchronize for event object %p failed: %s\n",
-                 log_get_prefix (NULL), h,
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0, "setting synchronize for event object %p failed: %s\n",
+                 h, w32_strerror (strerr, sizeof strerr));
       CloseHandle (h);
       return NULL;
     }
@@ -458,8 +461,7 @@ create_event (void)
 #endif
   if (DBG_INFO)
     {
-      fprintf (dbgfp, "%s: CreateEvent(%p) succeeded\n",
-               log_get_prefix (NULL), h2);
+      _pth_debug (0, "CreateEvent(%p) succeeded\n", h2);
     }
   return h2;
 }
@@ -474,14 +476,12 @@ set_event (HANDLE h)
   if (!SetEvent (h))
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: SetEvent(%p) failed: %s\n",
-                 log_get_prefix (NULL), h,
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0, "SetEvent(%p) failed: %s\n",
+                    h, w32_strerror (strerr, sizeof strerr));
     }
   else if (DBG_INFO)
     {
-      fprintf (dbgfp, "%s: SetEvent(%p) succeeded\n",
-               log_get_prefix (NULL), h);
+      _pth_debug (0, "SetEvent(%p) succeeded\n", h);
     }
 }
 #endif
@@ -494,14 +494,12 @@ reset_event (HANDLE h)
   if (!ResetEvent (h))
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: ResetEvent(%p) failed: %s\n",
-                 log_get_prefix (NULL), h,
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0, "ResetEvent(%p) failed: %s\n",
+                    h, w32_strerror (strerr, sizeof strerr));
     }
   else if (DBG_INFO)
     {
-      fprintf (dbgfp, "%s: ResetEvent(%p) succeeded\n",
-               log_get_prefix (NULL), h);
+      _pth_debug (0, "ResetEvent(%p) succeeded\n", h);
     }
 }
 
@@ -545,9 +543,9 @@ w32ce_timer_thread (void *arg)
           break;
         default:
           if (DBG_ERROR)
-            fprintf (dbgfp, 
-                     "%s:w32ce_timer_thread: WFSO failed: rc=%d\n",
-                     log_get_prefix (NULL), (int)GetLastError ());
+            _pth_debug (0, 
+                     "w32ce_timer_thread: WFSO failed: rc=%d\n",
+                     (int)GetLastError ());
           Sleep (500); /* Failsafe pause. */
           break;
         }
@@ -567,9 +565,9 @@ w32ce_timer_thread (void *arg)
                   if (!SetEvent (w32ce_timer[idx].event))
                     {
                       if (DBG_ERROR)
-                        fprintf (dbgfp, "%s:w32ce_timer_thread: SetEvent(%p) "
+                        _pth_debug (0, "w32ce_timer_thread: SetEvent(%p) "
                                  "failed: rc=%d\n",
-                                 log_get_prefix (NULL), (int)GetLastError ());
+                                 (int)GetLastError ());
                     }
                 }
             }
@@ -598,8 +596,8 @@ create_timer (void)
       if (!h)
         {
           if (DBG_ERROR)
-            fprintf (dbgfp, "%s:create_timer: CreateThread failed: rc=%d\n",
-                     log_get_prefix (NULL), (int)GetLastError ());
+            _pth_debug (0, "create_timer: CreateThread failed: rc=%d\n",
+                        (int)GetLastError ());
           goto leave;
         }
       CloseHandle (h);
@@ -639,13 +637,13 @@ leave:
   if (!h)
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: CreateWaitableTimer failed: rc=%d\n",
-                 log_get_prefix (NULL), (int)GetLastError ());
+        _pth_debug (0, "CreateWaitableTimer failed: rc=%d\n",
+                    (int)GetLastError ());
     }
   else if (DBG_INFO)
     {
-      fprintf (dbgfp, "%s: CreateWaitableTimer(%p) succeeded\n",
-               log_get_prefix (NULL), h);
+      _pth_debug (0, "CreateWaitableTimer(%p) succeeded\n",
+                  h);
     }
   return h;
 }
@@ -665,14 +663,14 @@ set_timer (HANDLE hd, DWORD milliseconds)
         if (!ResetEvent (w32ce_timer[idx].event))
           {
             if (DBG_ERROR)
-              fprintf (dbgfp, "%s:set_timer: ResetEvent(%p) failed: rc=%d\n",
-                       log_get_prefix (NULL), (int)GetLastError ());
+              _pth_debug (0, "set_timer: ResetEvent(%p) failed: rc=%d\n",
+                          (int)GetLastError ());
           }
         else if (!SetEvent (w32ce_timer_ev))
           {
             if (DBG_ERROR)
-              fprintf (dbgfp, "%s:set_timer: SetEvent(%p) failed: rc=%d\n",
-                       log_get_prefix (NULL), (int)GetLastError ());
+              _pth_debug (0, "set_timer: SetEvent(%p) failed: rc=%d\n",
+                          (int)GetLastError ());
           }
         else
           {
@@ -697,9 +695,9 @@ set_timer (HANDLE hd, DWORD milliseconds)
   if (!SetWaitableTimer (hd, &ll, 0, NULL, NULL, FALSE))
     {
       if (DBG_ERROR)
-        fprintf (dbgfp,"%s: %s: SetWaitableTimer failed: %s\n",
-                 log_get_prefix (NULL), __func__,
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0,"%s: SetWaitableTimer failed: %s\n",
+                    __func__,
+                    w32_strerror (strerr, sizeof strerr));
       return -1;
     }
   return 0;
@@ -736,8 +734,7 @@ int
 pth_init (void)
 {
   WSADATA wsadat;
-  const char *s, *s1, *s2;
-  char *p;
+  const char *s;
 
   if (pth_initialized)
     return TRUE;
@@ -745,9 +742,19 @@ pth_init (void)
   _pth_sema_subsystem_init ();
 
   s = getenv ("PTH_DEBUG");
-  if (s)
+  if (s && (debug_level = atoi (s)))
     {
-      debug_level = atoi (s);
+#ifdef HAVE_W32CE_SYSTEM
+      ActivateDevice (L"Drivers\\GnuPG_Log", 0);
+      /* Ignore a filename and write the debug output to the GPG2:
+         device.  */
+      dbghd = CreateFile (L"GPG2:", GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE,
+                          NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+#else
+      const char *s1, *s2;
+      char *p;
+
       s1 = strchr (s, ';');
       if (s1)
         {
@@ -765,9 +772,12 @@ pth_init (void)
               _pth_free (p);
             }
         }
+#endif
     }
+#ifndef HAVE_W32CE_SYSTEM
   if (!dbgfp)
     dbgfp = stderr;
+#endif
   if (debug_level)
     _pth_debug (DEBUG_ERROR, "pth_init called (level=%d)\n", debug_level);
 
@@ -984,13 +994,16 @@ do_pth_read (int fd,  void * buffer, size_t size)
   /* We have to check for internal pipes first, as socket operations
      can block on these.  */
   hd = _pth_get_reader_ev (fd);
+  TRACE_LOG1 ("  hd=%p", hd);
   if (hd != INVALID_HANDLE_VALUE)
     n = _pth_io_read (fd, buffer, size);
   else
     {
       if (is_socket_2 (fd))
         {
+          TRACE_LOG1 ("  recv size=%d", (int)size);
           n = recv (fd, buffer, size, 0);
+          TRACE_LOG1 ("  recv res=%d", n);
 #ifdef HAVE_W32CE_SYSTEM          
           if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
             use_readfile = 1; /* Fallback to ReadFile.  */
@@ -998,6 +1011,7 @@ do_pth_read (int fd,  void * buffer, size_t size)
         }
       else
         {
+          TRACE_LOG1 ("  use readfile size=%d", (int)size);
           n = -1;
           use_readfile = 1;
         }
@@ -1018,9 +1032,8 @@ do_pth_read (int fd,  void * buffer, size_t size)
 	      char strerr[256];
 	      
 	      if (DBG_ERROR)
-		fprintf (dbgfp, "%s: pth_read(0x%x) ReadFile failed: %s\n",
-			 log_get_prefix (NULL), fd,
-			 w32_strerror (strerr, sizeof strerr));
+		_pth_debug (0, "pth_read(0x%x) ReadFile failed: %s\n",
+			 fd, w32_strerror (strerr, sizeof strerr));
 	      n = -1;
 	      set_errno (map_w32_to_errno (GetLastError ()));
 	    }
@@ -1030,8 +1043,8 @@ do_pth_read (int fd,  void * buffer, size_t size)
       else if (n == -1)
         {
           if (DBG_ERROR)
-            fprintf (dbgfp, "%s: pth_read(0x%x) recv failed: ec=%d\n",
-                     log_get_prefix (NULL), fd, (int)WSAGetLastError ());
+            _pth_debug (0, "pth_read(0x%x) recv failed: ec=%d\n",
+                        fd, (int)WSAGetLastError ());
           set_errno (map_wsa_to_errno (WSAGetLastError ()));
         }
     }
@@ -1112,16 +1125,21 @@ do_pth_write (int fd, const void *buffer, size_t size)
   HANDLE hd;
   int use_writefile = 0;
 
+  TRACE_BEG (DEBUG_INFO, "do_pth_write", fd);
+
   /* We have to check for internal pipes first, as socket operations
      can block on these.  */
   hd = _pth_get_writer_ev (fd);
+  TRACE_LOG1 ("  hd=%p", hd);
   if (hd != INVALID_HANDLE_VALUE)
     n = _pth_io_write (fd, buffer, size);
   else
     {
       if (is_socket_2 (fd))
         {
+          TRACE_LOG1 ("  send size=%d", (int)size);
           n = send (fd, buffer, size, 0);
+          TRACE_LOG1 ("  send res=%d", n);
 #ifdef HAVE_W32CE_SYSTEM          
           if (n == -1 && WSAGetLastError () == WSAENOTSOCK)
             use_writefile = 1; /* Fallback to ReadFile.  */
@@ -1129,6 +1147,7 @@ do_pth_write (int fd, const void *buffer, size_t size)
         }
       else
         {
+          TRACE_LOG1 ("  use writefile size=%d", (int)size);
           n = -1;
           use_writefile = 1;
         }
@@ -1139,27 +1158,31 @@ do_pth_write (int fd, const void *buffer, size_t size)
 	  
 	  /* This is no real error because we first need to figure out
 	     if we have a handle or a socket.  */
+          TRACE_LOG2 ("  WriteFile on %p size=%d", (HANDLE)fd, (int)size);
 	  if (!WriteFile ((HANDLE)fd, buffer, size, &nwrite, NULL))
 	    {
 	      n = -1;
 	      set_errno (map_w32_to_errno (GetLastError ()));
 	      if (DBG_ERROR)
-		fprintf (dbgfp, "%s: pth_write(0x%x) failed in write: %s\n",
-			 log_get_prefix (NULL), fd,
-			 w32_strerror (strerr, sizeof strerr));
+		_pth_debug (0, "pth_write(0x%x) failed in write: %s\n",
+                            fd, w32_strerror (strerr, sizeof strerr));
 	    }
 	  else
-	    n = (int) nwrite;
+            {
+              TRACE_LOG2 ("           n=%d nwritten=%d", n, (int)nwrite);
+              n = (int) nwrite;
+            }
 	}
       else if (n == -1)
         {
           if (DBG_ERROR)
-            fprintf (dbgfp, "%s: pth_write(0x%x) send failed: ec=%d\n",
-                     log_get_prefix (NULL), fd, (int)WSAGetLastError ());
+            _pth_debug (0, "pth_write(0x%x) send failed: ec=%d\n",
+                        fd, (int)WSAGetLastError ());
           set_errno (map_wsa_to_errno (WSAGetLastError ()));
         }
     }
 
+  TRACE_SYSRES (n);
   return n;
 }
 
@@ -1235,14 +1258,14 @@ show_event_ring (const char *text, pth_event_t ev)
 
   if (!ev)
     {
-      fprintf (dbgfp, "show_event_ring(%s):  No ring\n", text);
+      _pth_debug (0, "show_event_ring(%s):  No ring\n", text);
       return;
     }
 
   r = ev;
   do
     {
-      fprintf (dbgfp, "show_event_ring(%s): type=%d r=%p prev=%p next=%p\n",
+      _pth_debug (0, "show_event_ring(%s): type=%d r=%p prev=%p next=%p\n",
                text, r->u_type, r, r->prev, r->next);
     }
   while (r=r->next, r != ev);
@@ -1470,9 +1493,8 @@ pth_mutex_release (pth_mutex_t *mutex)
       char strerr[256];
 
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: pth_release_mutex %p failed: %s\n",
-                 log_get_prefix (NULL), *mutex,
-                 w32_strerror (strerr, sizeof strerr));
+        _pth_debug (0, "pth_release_mutex %p failed: %s\n",
+                    *mutex, w32_strerror (strerr, sizeof strerr));
       rc = FALSE;
     }
   else
@@ -1502,9 +1524,8 @@ pth_mutex_acquire (pth_mutex_t *mutex, int tryonly, pth_event_t ev_extra)
           char strerr[256];
           
           if (DBG_ERROR)
-            fprintf (dbgfp, "%s: pth_mutex_acquire for %p failed: %s\n",
-                     log_get_prefix (NULL), *mutex,
-                     w32_strerror (strerr, sizeof strerr));
+            _pth_debug (0, "pth_mutex_acquire for %p failed: %s\n",
+                        *mutex, w32_strerror (strerr, sizeof strerr));
         }
         rc = FALSE;
         break;
@@ -1515,9 +1536,9 @@ pth_mutex_acquire (pth_mutex_t *mutex, int tryonly, pth_event_t ev_extra)
 
       default:
         if (DBG_ERROR)
-          fprintf (dbgfp, "%s: WaitForSingleObject returned unexpected "
-                   "code %d for mutex %p\n",
-                   log_get_prefix (NULL), code, *mutex);
+          _pth_debug (0, "WaitForSingleObject returned unexpected "
+                      "code %d for mutex %p\n",
+                      code, *mutex);
         rc = FALSE;
         break;
     }
@@ -1632,8 +1653,7 @@ pth_attr_set (pth_attr_t hd, int field, ...)
         {
           hd->flags |= PTH_ATTR_JOINABLE;
           if (DBG_INFO)
-            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_JOINABLE\n",
-                     log_get_prefix (NULL));
+            _pth_debug (0, "pth_attr_set: PTH_ATTR_JOINABLE\n");
         }
       break;
 
@@ -1644,8 +1664,8 @@ pth_attr_set (pth_attr_t hd, int field, ...)
           hd->flags |= PTH_ATTR_STACK_SIZE;
           hd->stack_size = val;
           if (DBG_INFO)
-            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_STACK_SIZE %d\n",
-                     log_get_prefix (NULL), val);
+            _pth_debug (0, "pth_attr_set: PTH_ATTR_STACK_SIZE %d\n",
+                        val);
         }
       break;
 
@@ -1660,8 +1680,8 @@ pth_attr_set (pth_attr_t hd, int field, ...)
             return FALSE;
           hd->flags |= PTH_ATTR_NAME;
           if (DBG_INFO)
-            fprintf (dbgfp, "%s: pth_attr_set: PTH_ATTR_NAME %s\n",
-                     log_get_prefix (NULL), hd->name);
+            _pth_debug (0, "pth_attr_set: PTH_ATTR_NAME %s\n",
+                        hd->name);
         }
       break;
 
@@ -1706,15 +1726,13 @@ do_pth_spawn (pth_attr_t hd, void *(*func)(void *), void *arg)
      FIXME: We should not use W32's thread handle directly but keep
      our own thread control structure.  CTX may be used for that.  */
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: do_pth_spawn creating thread ...\n",
-             log_get_prefix (NULL));
+    _pth_debug (0, "do_pth_spawn creating thread ...\n");
   th = CreateThread (&sa, hd->stack_size,
                      (LPTHREAD_START_ROUTINE)launch_thread,
                      ctx, CREATE_SUSPENDED, &tid);
   ctx->th = th;
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: do_pth_spawn created thread %p\n",
-             log_get_prefix (NULL),th);
+    _pth_debug (0, "do_pth_spawn created thread %p\n", th);
   if (!th)
     _pth_free (ctx);
   else
@@ -1877,7 +1895,7 @@ sig_handler (DWORD signo)
   /* Fixme: We can keep only track of one signal at a time. */
   set_event (pth_signo_ev);
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: sig_handler=%d\n", log_get_prefix (NULL), pth_signo);
+    _pth_debug (0, "sig_handler=%d\n", pth_signo);
   return TRUE;
 }
 #endif
@@ -1921,13 +1939,13 @@ do_pth_event_body (unsigned long spec, va_list arg)
   if ((spec & (PTH_MODE_CHAIN|PTH_MODE_REUSE)))
     {
       if (DBG_ERROR)
-        fprintf (dbgfp, "%s: pth_event spec=%lx - not supported\n", 
-                 log_get_prefix (NULL), spec);
+        _pth_debug (0, "pth_event spec=%lx - not supported\n", 
+                    spec);
       return NULL; /* Not supported.  */
     }
 
   if (DBG_INFO)
-    fprintf (dbgfp, "%s: pth_event spec=%lx\n", log_get_prefix (NULL), spec);
+    _pth_debug (0, "pth_event spec=%lx\n", spec);
 
   ev = _pth_calloc (1, sizeof *ev);
   if (!ev)
@@ -1972,8 +1990,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
       /* The signal handler is disabled for now.  */
       rc = 0/*SetConsoleCtrlHandler (sig_handler, TRUE)*/;
       if (DBG_INFO)
-        fprintf (dbgfp, "%s: pth_event: sigs rc=%d\n",
-                 log_get_prefix (NULL), rc);
+        _pth_debug (0, "pth_event: sigs rc=%d\n", rc);
     }
   else if (spec & PTH_EVENT_FD)
     {
@@ -1982,8 +1999,7 @@ do_pth_event_body (unsigned long spec, va_list arg)
       ev->u_type = PTH_EVENT_FD;
       ev->u.fd = va_arg (arg, int);
       if (DBG_INFO)
-        fprintf (dbgfp, "%s: pth_event: fd=0x%x\n",
-                 log_get_prefix (NULL), ev->u.fd);
+        _pth_debug (0, "pth_event: fd=0x%x\n", ev->u.fd);
     }
   else if (spec & PTH_EVENT_TIME)
     {
@@ -2022,10 +2038,10 @@ do_pth_event_body (unsigned long spec, va_list arg)
           if (WSAEventSelect (fdarray[i].fd, ev->hd, fdarray[i].netevents))
             {
               if (DBG_ERROR)
-                fprintf (dbgfp, 
-                         "%s: pth_event: WSAEventSelect(%d[%d]) failed: %s\n",
-                         log_get_prefix (NULL), i, fdarray[i].fd,
-                         wsa_strerror (strerr, sizeof strerr));
+                _pth_debug (0, 
+                            "pth_event: WSAEventSelect(%d[%d]) failed: %s\n",
+                            i, fdarray[i].fd,
+                            wsa_strerror (strerr, sizeof strerr));
             }
         }
     }
@@ -2347,8 +2363,8 @@ do_pth_wait (pth_event_t ev)
 		if (res)
 		  {
 		    if (DBG_ERROR)
-		      fprintf (dbgfp, "%s: can't set event for FD 0x%x "
-			       "(ignored)\n", log_get_prefix (NULL), fd);
+		      _pth_debug (0, "can't set event for FD 0x%x "
+                                  "(ignored)\n", fd);
 		  }
 		else
 		  {
@@ -2367,8 +2383,8 @@ do_pth_wait (pth_event_t ev)
 		    if (reader_ev == INVALID_HANDLE_VALUE)
 		      {
 			if (DBG_ERROR)
-			  fprintf (dbgfp, "%s: no reader for FD 0x%x "
-				   "(ignored)\n", log_get_prefix (NULL), fd);
+			  _pth_debug (0, "no reader for FD 0x%x "
+                                      "(ignored)\n", fd);
 		      }
 		    else
 		      {
@@ -2384,8 +2400,8 @@ do_pth_wait (pth_event_t ev)
 		    if (writer_ev == INVALID_HANDLE_VALUE)
 		      {
 			if (DBG_ERROR)
-			  fprintf (dbgfp, "%s: no writer for FD 0x%x "
-				   "(ignored)\n", log_get_prefix (NULL), fd);
+			  _pth_debug (0, "no writer for FD 0x%x "
+                                      "(ignored)\n", fd);
 		      }
 		    else
 		      {
@@ -2421,12 +2437,12 @@ do_pth_wait (pth_event_t ev)
 
         case PTH_EVENT_MUTEX:
           if (DBG_ERROR)
-            fprintf (dbgfp, "pth_wait: ignoring mutex event.\n");
+            _pth_debug (0, "pth_wait: ignoring mutex event.\n");
           break;
 
 	default:
           if (DBG_ERROR)
-            fprintf (dbgfp, "pth_wait: unhandled event type 0x%x.\n",
+            _pth_debug (0, "pth_wait: unhandled event type 0x%x.\n",
 		     r->u_type);
 	  break;
         }
@@ -2488,11 +2504,11 @@ do_pth_wait (pth_event_t ev)
 		    if (WSAEnumNetworkEvents (fdarray[i].fd, NULL, &ne))
 		      {
 			if (DBG_ERROR)
-			  fprintf (dbgfp, 
-				   "%s: pth_wait: "
-				   "WSAEnumNetworkEvents(%d[%d]) failed: %s\n",
-				   log_get_prefix (NULL), i, fdarray[i].fd,
-				   wsa_strerror (strerr, sizeof strerr));
+			  _pth_debug (0, 
+                                      "pth_wait: WSAEnumNetworkEvents(%d[%d])"
+                                      " failed: %s\n",
+                                      i, fdarray[i].fd,
+                                      wsa_strerror (strerr, sizeof strerr));
 			continue;
 		      }
 		    
@@ -2521,10 +2537,10 @@ do_pth_wait (pth_event_t ev)
 		    if (WSAEventSelect (fdarray[i].fd, NULL, 0))
 		      {
 			if (DBG_ERROR)
-			  fprintf (dbgfp, 
-				   "%s: pth_wait: WSAEventSelect(%d[%d]-clear)"
+			  _pth_debug (0, 
+				   "pth_wait: WSAEventSelect(%d[%d]-clear)"
 				   " failed: %s\n",
-				   log_get_prefix (NULL), i, fdarray[i].fd,
+				   i, fdarray[i].fd,
 				   wsa_strerror (strerr, sizeof strerr));
 		      }
 		    
@@ -2533,10 +2549,10 @@ do_pth_wait (pth_event_t ev)
 			== SOCKET_ERROR)
 		      {
 			if (DBG_ERROR)
-			  fprintf (dbgfp, 
-				   "%s: pth_wait: ioctlsocket(%d[%d])"
+			  _pth_debug (0, 
+				   "pth_wait: ioctlsocket(%d[%d])"
 				   " failed: %s\n",
-				   log_get_prefix (NULL), i, fdarray[i].fd,
+				   i, fdarray[i].fd,
 				   wsa_strerror (strerr, sizeof strerr));
 		      }
 		  }
