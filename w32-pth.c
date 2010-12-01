@@ -511,7 +511,7 @@ reset_event (HANDLE h)
 static DWORD CALLBACK 
 w32ce_timer_thread (void *arg)
 {
-  int idx, any;
+  int idx;
   DWORD timeout, elapsed, lasttick;
 
   (void)arg;
@@ -520,21 +520,18 @@ w32ce_timer_thread (void *arg)
   for (;;)
     {
       elapsed = lasttick;  /* Get start time.  */
-      timeout = 0;
+      timeout = INFINITE;
       EnterCriticalSection (&w32ce_timer_cs);
-      for (idx=any=0; idx < DIM (w32ce_timer); idx++)
+      for (idx=0; idx < DIM (w32ce_timer); idx++)
         {
           if (w32ce_timer[idx].event && w32ce_timer[idx].active)
             {
-              any = 1;
               if (w32ce_timer[idx].remaining < timeout)
                 timeout = w32ce_timer[idx].remaining;
             }
         }
       LeaveCriticalSection (&w32ce_timer_cs);
-      if (!any)
-        timeout = INFINITE;
-      else if (timeout > 0x7fffffff)
+      if (timeout != INFINITE && timeout > 0x7fffffff)
         timeout = 0x7fffffff;
       switch (WaitForSingleObject (w32ce_timer_ev, (DWORD)timeout))
         {

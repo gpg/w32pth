@@ -1,3 +1,7 @@
+2010-12-02  Marcus Brinkmann  <marcus@g10code.com>
+
+	* w32-pth.c (w32ce_timer_thread): Oops.  (Fix last change.)
+
 2010-12-01  Marcus Brinkmann  <marcus@g10code.com>
 
 	* w32-pth.c (w32ce_timer_thread): Use earliest timer, not latest.
