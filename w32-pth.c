@@ -527,7 +527,7 @@ w32ce_timer_thread (void *arg)
           if (w32ce_timer[idx].event && w32ce_timer[idx].active)
             {
               any = 1;
-              if (w32ce_timer[idx].remaining > timeout)
+              if (w32ce_timer[idx].remaining < timeout)
                 timeout = w32ce_timer[idx].remaining;
             }
         }
