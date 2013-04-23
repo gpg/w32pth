@@ -1,16 +1,18 @@
-Noteworthy changes in version 2.0.5
+Noteworthy changes in version 2.0.5 (2013-04-23)
 ------------------------------------------------
 
  * Fix regression in W32 timer handling introduced by 2.0.3.
 
+ * Switch to i686-w64-mingw32 as default toolchain.
 
-Noteworthy changes in version 2.0.4 (2010-08-02) 
+
+Noteworthy changes in version 2.0.4 (2010-08-02)
 ------------------------------------------------
 
  * Bug fix: Export pth_enter and pth_leave.
 
 
-Noteworthy changes in version 2.0.3 (2010-07-30) 
+Noteworthy changes in version 2.0.3 (2010-07-30)
 ------------------------------------------------
 
  * Support WindowsCE.
@@ -41,10 +43,10 @@ Noteworthy changes in version 2.0.1 (2007-08-16)
 
  * Fixes.  Better support for select.
 
- 
+
 Noteworthy changes in version 2.0.0 (2007-07-05)
 ------------------------------------------------
- 
+
  * First release.  We need to use this unusually high version number
    to indicate the version of Pth we are emulating.
 

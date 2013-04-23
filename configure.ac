@@ -1,18 +1,18 @@
 # configure.ac - for w32pth
 # Copyright (C) 2007, 2008 g10 Code GmbH
-# 
+#
 # This file is part of W32PTH
-# 
+#
 # W32PTH is free software; you can redistribute it and/or modify it
 # under the terms of the GNU Lesser General Public License as
 # published by the Free Software Foundation; either version 2.1 of the
 # License, or (at your option) any later version.
-# 
+#
 # W32PTH is distributed in the hope that it will be useful, but
 # WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 # Lesser General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
@@ -26,7 +26,7 @@ min_automake_version="1.10"
 # Remember to change the version number immediately *after* a release.
 # Set my_issvn to "yes" for non-released code.  Remember to run an
 # "svn up" and "autogen.sh" right before creating a distribution.
-m4_define([my_version], [2.0.4])
+m4_define([my_version], [2.0.5])
 m4_define([my_issvn], [no])
 
 m4_define([svn_revision], m4_esyscmd([echo -n $( (svn info 2>/dev/null \
@@ -45,7 +45,7 @@ AC_INIT([w32pth],
 # Please remember to document interface changes in the NEWS file.
 W32PTH_LT_CURRENT=2
 W32PTH_LT_AGE=2
-W32PTH_LT_REVISION=1
+W32PTH_LT_REVISION=2
 #-------------------
 # If the API is changed in an incompatible way: increment the next counter.
 W32PTH_CONFIG_API_VERSION=1
@@ -211,7 +211,7 @@ AM_CONDITIONAL(CROSS_COMPILING, test x$cross_compiling = xyes)
 # Generate extended version information for W32.
 if test "$have_w32_system" = yes; then
    BUILD_TIMESTAMP=`date --iso-8601=minutes`
-   changequote(,)dnl 
+   changequote(,)dnl
    BUILD_FILEVERSION=`echo "$VERSION" | sed 's/\([0-9.]*\).*/\1./;s/\./,/g'`
    changequote([,])dnl
    BUILD_FILEVERSION="${BUILD_FILEVERSION}${BUILD_REVISION}"
@@ -219,7 +219,7 @@ fi
 AC_SUBST(BUILD_REVISION)
 AC_SUBST(BUILD_TIMESTAMP)
 AC_SUBST(BUILD_FILEVERSION)
-AC_DEFINE_UNQUOTED(BUILD_REVISION, "$BUILD_REVISION", 
+AC_DEFINE_UNQUOTED(BUILD_REVISION, "$BUILD_REVISION",
                    [Subversion revision used to build this package])
 
 
@@ -233,7 +233,7 @@ AC_OUTPUT
 
 echo "
         W32PTH v${VERSION} has been configured as follows:
-        
+
         Platform:  $host
 
 "
