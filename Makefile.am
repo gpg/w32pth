@@ -22,7 +22,7 @@
 
 ACLOCAL_AMFLAGS = -I m4
 AUTOMAKE_OPTIONS = no-dist-gzip dist-bzip2
-DISTCHECK_CONFIGURE_FLAGS = --host=i586-mingw32msvc 
+DISTCHECK_CONFIGURE_FLAGS = --host=i686-w64-mingw32
 
 EXTRA_DIST = autogen.sh pth-config.in libw32pth.def
 

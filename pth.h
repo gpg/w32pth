@@ -30,13 +30,22 @@
 #error w32pth conflict.  A vanilla pth.h has already been included.
 #endif
 
+#include <winsock2.h> /* Newer mingw version require this to be
+                         included before windows.h.  */
 
+/* #include <windows.h>  /\* We need this for sockaddr et al.  FIXME: too */
+/*                          heavyweight - may be we should factor such */
+/*                          code out to a second header and adjust all */
+/*                          user files to include it only if required. *\/ */
 
-#include <windows.h>  /* We need this for sockaddr et al.  FIXME: too
-                         heavyweight - may be we should factor such
-                         code out to a second header and adjust all
-                         user files to include it only if required. */ 
-#include <sys/types.h> /* For sigset_t. */
+/* Mingw64 defines sigset_t only of _POSIX is defined.  We don't want
+   to do define this macro because we are a public header.  Thus we
+   use a bit of mingw64 internal knowledge to declare sigset_t.  */
+#include <sys/types.h>
+#if __MINGW64_VERSION_MAJOR >= 2 && !defined(_POSIX)
+typedef _sigset_t	sigset_t;
+#endif /* mingw64 >= 2 */
+
 
 #ifndef W32_PTH_HANDLE_INTERNAL
 #define W32_PTH_HANDLE_INTERNAL  int
